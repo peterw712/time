@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Time Budget App</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      text-align: center;
+      padding: 20px;
+      background: #111;
+      color: #eee;
+    }
+    canvas {
+      max-width: 400px;
+      margin: 20px auto;
+    }
+    input, button, select {
+      padding: 10px;
+      margin: 5px;
+      font-size: 1rem;
+      color: #000;
+    }
+    #activityStats {
+      max-width: 400px;
+      margin: 20px auto;
+      text-align: left;
+    }
+    #activityStats table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    #activityStats th, #activityStats td {
+      padding: 5px;
+      border-bottom: 1px solid #555;
+    }
+    #activityStats th {
+      text-align: left;
+    }
+  </style>
+</head>
+<body>
+  <h1>Time Budget</h1>
+  <label for="datePicker">Select Date:</label>
+  <input type="date" id="datePicker" />
+  <div id="controls">
+    <input type="text" id="activityName" placeholder="Enter activity" />
+    <button onclick="startActivity()" id="startBtn">Start</button>
+    <button onclick="stopActivity()" id="stopBtn">Stop</button>
+  </div>
+  <canvas id="timeChart"></canvas>
+  <div id="activityStats"></div>
+
+  <script>
+    const SECONDS_IN_DAY = 86400;
+    const genericColors = [
+      '#4caf50', '#2196f3', '#ff9800', '#e91e63', '#9c27b0', '#00bcd4', '#ffc107', '#795548', '#607d8b'
+    ];
+
+    function getStartOfDayTimestamp(dateObj) {
+      const d = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
+      return d.getTime();
+    }
+
+    function parseDateString(dateStr) {
+      const [yyyy, mm, dd] = dateStr.split('-').map(Number);
+      return new Date(yyyy, mm - 1, dd);
+    }
+
+    function formatDateKey(dateObj) {
+      const yyyy = dateObj.getFullYear();
+      const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const dd = String(dateObj.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
+    }
+
+    function formatSeconds(sec) {
+      const hours = Math.floor(sec / 3600);
+      const minutes = Math.floor((sec % 3600) / 60);
+      const seconds = sec % 60;
+      const hh = hours.toString().padStart(2, '0');
+      const mm = minutes.toString().padStart(2, '0');
+      const ss = seconds.toString().padStart(2, '0');
+      return `${hh}:${mm}:${ss}`;
+    }
+
+    // Variables to hold state
+    let activityLog = []; // For currently viewed date
+    let currentActivity = null; // Only valid for today
+    let viewedDate = new Date(); // JS Date object
+
+    // Elements
+    const datePicker = document.getElementById('datePicker');
+    const activityNameInput = document.getElementById('activityName');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const controlsDiv = document.getElementById('controls');
+
+    // Initialize Chart
+    const ctx = document.getElementById('timeChart').getContext('2d');
+    const chart = new Chart(ctx, {
+      type: 'doughnut',
+      data: { labels: [], datasets: [{ data: [], backgroundColor: [], borderColor: '#eee', borderWidth: 1 }] },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: { filter: (legendItem) => legendItem.text !== 'Remaining' }
+          },
+          tooltip: {
+            callbacks: {
+              label: function(context) { return context.label || ''; }
+            }
+          }
+        },
+        animation: false,
+      }
+    });
+
+    // Load data for a specific date
+    function loadDateData(dateObj) {
+      const keyLog = `activityLog-${formatDateKey(dateObj)}`;
+      const savedLog = JSON.parse(localStorage.getItem(keyLog) || '[]');
+      activityLog = savedLog.map(item => ({ name: item.name, start: item.start, end: item.end }));
+      // Only restore currentActivity if date is today
+      const todayKey = formatDateKey(new Date());
+      if (formatDateKey(dateObj) === todayKey) {
+        const savedCurrent = JSON.parse(localStorage.getItem('currentActivity') || 'null');
+        if (savedCurrent) {
+          currentActivity = savedCurrent;
+          // Persist activity name in input
+          activityNameInput.value = currentActivity.name;
+        } else {
+          currentActivity = null;
+        }
+      } else {
+        currentActivity = null;
+      }
+    }
+
+    // Save data for a specific date
+    function saveDateData(dateObj) {
+      const keyLog = `activityLog-${formatDateKey(dateObj)}`;
+      localStorage.setItem(keyLog, JSON.stringify(activityLog));
+      // Only store currentActivity for today
+      const todayKey = formatDateKey(new Date());
+      if (formatDateKey(dateObj) === todayKey) {
+        localStorage.setItem('currentActivity', JSON.stringify(currentActivity));
+      }
+    }
+
+    // Handle datePicker changes
+    datePicker.addEventListener('change', () => {
+      const selectedStr = datePicker.value;
+      if (!selectedStr) return;
+      const selectedDate = parseDateString(selectedStr);
+      viewedDate = selectedDate;
+      loadDateData(viewedDate);
+      updateControls();
+      updateChart();
+    });
+
+    // Update control visibility based on whether viewing today
+    function updateControls() {
+      const todayKey = formatDateKey(new Date());
+      if (formatDateKey(viewedDate) === todayKey) {
+        controlsDiv.style.display = 'block';
+        startBtn.disabled = false;
+        stopBtn.disabled = false;
+        activityNameInput.disabled = false;
+      } else {
+        controlsDiv.style.display = 'none';
+      }
+    }
+
+    // Start an activity (only for today)
+    function startActivity() {
+      if (formatDateKey(viewedDate) !== formatDateKey(new Date())) return;
+      const name = activityNameInput.value.trim();
+      if (!name || currentActivity) return;
+      currentActivity = { name, start: Date.now() };
+      saveDateData(viewedDate);
+    }
+
+    // Stop an activity (only for today)
+    function stopActivity() {
+      if (!currentActivity) return;
+      currentActivity.end = Date.now();
+      activityLog.push(currentActivity);
+      // Keep input value as current activity name for persistence
+      activityNameInput.value = currentActivity.name;
+      currentActivity = null;
+      saveDateData(viewedDate);
+    }
+
+    // Update chart based on activityLog and currentActivity for viewedDate
+    function updateChart() {
+      const now = Date.now();
+      const startOfDay = getStartOfDayTimestamp(viewedDate);
+      const isToday = formatDateKey(viewedDate) === formatDateKey(new Date());
+      const totalElapsedSeconds = isToday ? Math.floor((now - startOfDay) / 1000) : SECONDS_IN_DAY;
+      const elapsed = Math.min(totalElapsedSeconds, SECONDS_IN_DAY);
+
+      const activityDurations = {};
+      let productiveSeconds = 0;
+
+      activityLog.forEach(a => {
+        const start = Math.max(a.start, startOfDay);
+        const end = isToday ? Math.min(a.end || now, now) : Math.min(a.end, startOfDay + SECONDS_IN_DAY * 1000);
+        if (end > start) {
+          const duration = Math.floor((end - start) / 1000);
+          activityDurations[a.name] = (activityDurations[a.name] || 0) + duration;
+          productiveSeconds += duration;
+        }
+      });
+
+      if (isToday && currentActivity) {
+        const liveDuration = Math.floor((now - currentActivity.start) / 1000);
+        activityDurations[currentActivity.name] = (activityDurations[currentActivity.name] || 0) + liveDuration;
+        productiveSeconds += liveDuration;
+      }
+
+      const unproductiveSeconds = Math.max(0, elapsed - productiveSeconds);
+      const remainingSeconds = isToday ? Math.max(0, SECONDS_IN_DAY - elapsed) : 0;
+
+      // Build display labels with formatted time
+      const baseLabels = Object.keys(activityDurations);
+      const baseData = Object.values(activityDurations);
+      const labels = [];
+      const dataArray = [];
+
+      baseLabels.forEach((name, idx) => {
+        const seconds = baseData[idx];
+        labels.push(`${name} (${formatSeconds(seconds)})`);
+        dataArray.push(seconds);
+      });
+
+      if (unproductiveSeconds > 0) {
+        labels.push(`Unproductive (${formatSeconds(unproductiveSeconds)})`);
+        dataArray.push(unproductiveSeconds);
+      }
+      if (remainingSeconds > 0) {
+        labels.push(`Remaining (${formatSeconds(remainingSeconds)})`);
+        dataArray.push(remainingSeconds);
+      }
+
+      const backgroundColor = labels.map(label => {
+        if (label.startsWith('Unproductive')) return '#777';
+        if (label.startsWith('Remaining')) return 'rgba(0, 0, 0, 0)';
+        const name = label.split(' (')[0];
+        const activityIndex = baseLabels.indexOf(name);
+        return genericColors[activityIndex % genericColors.length];
+      });
+
+      chart.data.labels = labels;
+      chart.data.datasets[0].data = dataArray;
+      chart.data.datasets[0].backgroundColor = backgroundColor;
+      chart.update();
+
+      updateActivityStats(activityDurations, elapsed);
+    }
+
+    function updateActivityStats(durations, elapsed) {
+      const statsDiv = document.getElementById('activityStats');
+      let html = '<table><tr><th>Activity</th><th>Time</th><th>% of Elapsed</th></tr>';
+      for (const [name, seconds] of Object.entries(durations)) {
+        const pct = elapsed > 0 ? ((seconds / elapsed) * 100).toFixed(1) : '0.0';
+        html += `<tr><td>${name}</td><td>${formatSeconds(seconds)}</td><td>${pct}%</td></tr>`;
+      }
+      html += '</table>';
+      statsDiv.innerHTML = html;
+    }
+
+    // At midnight, if viewing today, clear data and reload
+    setInterval(() => {
+      if (formatDateKey(new Date()) === formatDateKey(viewedDate)) {
+        const now = Date.now();
+        const startOfDay = getStartOfDayTimestamp(new Date());
+        if (now >= startOfDay + SECONDS_IN_DAY * 1000) {
+          activityLog = [];
+          currentActivity = null;
+          saveDateData(viewedDate);
+          updateChart();
+        }
+      }
+    }, 60000); // check every minute
+
+    // Initialize page
+    window.addEventListener('DOMContentLoaded', () => {
+      // Compute local YYYY-MM-DD correctly
+      const today = new Date();
+      const offsetMinutes = today.getTimezoneOffset();
+      const localMid = new Date(today.getTime() - offsetMinutes * 60000);
+      const todayStr = localMid.toISOString().split('T')[0];
+
+      datePicker.value = todayStr;
+      viewedDate = parseDateString(todayStr);
+      loadDateData(viewedDate);
+      updateControls();
+      updateChart();
+      setInterval(updateChart, 1000);
+    });
+  </script>
+</body>
+</html>
