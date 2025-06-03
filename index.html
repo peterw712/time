@@ -440,7 +440,7 @@
       const statsDiv = document.getElementById('activityStats');
       let html;
       if (viewMode === 'daily') {
-        html = '<table><tr><th>Activity</th><th>Time</th><th>% of Period</th><th>Delete</th></tr>';
+        html = '<table><tr><th>Activity</th><th>Time</th><th>% of Elapsed</th><th>Delete</th></tr>';
         const allLabels = Object.keys(durations);
         allLabels.forEach((name, idx) => {
           const seconds = durations[name];
@@ -461,7 +461,7 @@
         });
         html += '</table>';
       } else {
-        html = '<table><tr><th>Activity</th><th>Time</th><th>% of Period</th></tr>';
+        html = '<table><tr><th>Activity</th><th>Time</th><th>% of Elapsed</th></tr>';
         const allLabels = Object.keys(durations);
         allLabels.forEach((name, idx) => {
           const seconds = durations[name];
