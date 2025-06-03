@@ -3,8 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Time Budget App with Login</title>
+  <title>Time Budget App with Firebase Auth</title>
+  <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Firebase SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+
   <style>
     body {
       font-family: sans-serif;
@@ -76,7 +81,7 @@
   <!-- ========== LOGIN / SIGNUP SCREEN ========== -->
   <div id="loginContainer">
     <h1>Login to Time Budget App</h1>
-    <input type="text" id="loginUsername" placeholder="Username" /><br />
+    <input type="email" id="loginEmail" placeholder="Email" /><br />
     <input type="password" id="loginPassword" placeholder="Password" /><br />
     <button onclick="loginUser()">Login</button>
     <button onclick="signupUser()">Sign Up</button>
@@ -118,69 +123,73 @@
 
   <script>
     // ================================================
-    // 1) AUTHENTICATION LOGIC
+    // 0) FIREBASE CONFIGURATION
     // ================================================
-    function getUsers() {
-      return JSON.parse(localStorage.getItem('users') || '{}');
-    }
-    function saveUsers(users) {
-      localStorage.setItem('users', JSON.stringify(users));
-    }
+    // Replace the following with your Firebase project's config object.
+    const firebaseConfig = {
+      apiKey: "AIzaSyCUkmGNiWZqtvbESF42gOc00CGTf2fJ3Ow",
+      authDomain: "time-budget-f0f13.firebaseapp.com",
+      projectId: "time-budget-f0f13",
+      // storageBucket, messagingSenderId, appId, etc. (if needed)
+    };
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+
+    // ================================================
+    // 1) AUTHENTICATION LOGIC (Firebase-based)
+    // ================================================
     function loginUser() {
-      const u = document.getElementById('loginUsername').value.trim();
-      const p = document.getElementById('loginPassword').value;
-      if (!u || !p) {
-        alert('Please enter both username and password.');
+      const email = document.getElementById('loginEmail').value.trim();
+      const password = document.getElementById('loginPassword').value;
+      if (!email || !password) {
+        alert('Please enter both email and password.');
         return;
       }
-      const users = getUsers();
-      if (users[u] && users[u] === p) {
-        localStorage.setItem('loggedInUser', u);
-        showApp();
-      } else {
-        alert('Invalid credentials.');
-      }
+      auth.signInWithEmailAndPassword(email, password)
+        .catch(err => {
+          alert('Login failed: ' + err.message);
+        });
     }
+
     function signupUser() {
-      const u = document.getElementById('loginUsername').value.trim();
-      const p = document.getElementById('loginPassword').value;
-      if (!u || !p) {
-        alert('Please enter both username and password.');
+      const email = document.getElementById('loginEmail').value.trim();
+      const password = document.getElementById('loginPassword').value;
+      if (!email || !password) {
+        alert('Please enter both email and password.');
         return;
       }
-      const users = getUsers();
-      if (users[u]) {
-        alert('Username already exists. Pick a different one.');
-        return;
-      }
-      users[u] = p;
-      saveUsers(users);
-      localStorage.setItem('loggedInUser', u);
-      showApp();
+      auth.createUserWithEmailAndPassword(email, password)
+        .catch(err => {
+          alert('Sign-up failed: ' + err.message);
+        });
     }
+
     function logoutUser() {
-      localStorage.removeItem('loggedInUser');
-      location.reload();
+      auth.signOut();
     }
+
     function showApp() {
       document.getElementById('loginContainer').style.display = 'none';
       document.getElementById('appContainer').style.display = 'block';
       initializeApp();
     }
+
     function showLogin() {
       document.getElementById('loginContainer').style.display = 'block';
       document.getElementById('appContainer').style.display = 'none';
     }
-    window.addEventListener('DOMContentLoaded', () => {
-      const user = localStorage.getItem('loggedInUser');
-      if (user) showApp();
-      else showLogin();
+
+    auth.onAuthStateChanged(user => {
+      if (user) {
+        showApp();
+      } else {
+        showLogin();
+      }
     });
 
     // ================================================
     // 2) TIME BUDGET APP LOGIC
     // ================================================
-    // CONSTANTS (must be defined before chart or any time‐logic runs)
     const SECONDS_IN_DAY = 86400;
     const genericColors = [
       '#4caf50', '#2196f3', '#ff9800', '#e91e63',
@@ -199,6 +208,7 @@
       updateControls();
       updateChart();
     }
+
     function toggleLabelMode() {
       showPercent = document.getElementById('toggleMode').checked;
       updateChart();
@@ -228,8 +238,8 @@
       return `${String(H).padStart(2, '0')}:${String(M).padStart(2, '0')}:${String(S).padStart(2, '0')}`;
     }
     function getStorageKey(base) {
-      const user = localStorage.getItem('loggedInUser');
-      return `${user}-${base}`;
+      const user = auth.currentUser;
+      return `${user.uid}-${base}`;
     }
 
     let activityLog = [];
@@ -240,15 +250,11 @@
     const datePicker = document.getElementById('datePicker');
     const monthPicker = document.getElementById('monthPicker');
     const activityNameInput = document.getElementById('activityName');
-    const startBtn = document.getElementById('startBtn');
-    const stopBtn = document.getElementById('stopBtn');
     const controlsDiv = document.getElementById('controls');
 
-    // ─────────────────────────────────────────────────────────────────
     // Chart variable (will be created in initializeApp)
-    let chart;
+    let chart = null;
 
-    // ─────────────────────────────────────────────────────────────────
     function loadDateData(dateObj) {
       const keyLog = getStorageKey(`activityLog-${formatDateKey(dateObj)}`);
       const savedLog = JSON.parse(localStorage.getItem(keyLog) || '[]');
@@ -455,13 +461,11 @@
         });
 
         updateActivityStats(activityDurations, elapsed, baseLabels);
-      }
-      else {
+      } else {
         const year = viewedDate.getFullYear();
         const month = viewedDate.getMonth();
         const days = getDaysInMonth(year, month);
         const totalMonthSeconds = days * SECONDS_IN_DAY;
-
         const now = Date.now();
         const monthStart = new Date(year, month, 1).getTime();
         const isCurrentMonth =
