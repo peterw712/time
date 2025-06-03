@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Time Budget App (Carry-Over Enabled)</title>
+  <title>Time Budget App with Login</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     body {
@@ -53,38 +53,138 @@
     #monthlyControls {
       display: none;
     }
+    #loginContainer, #appContainer {
+      max-width: 500px;
+      margin: 0 auto;
+    }
+    #appContainer {
+      display: none;
+    }
+    #logoutBtn {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: #e91e63;
+      color: #fff;
+      border: none;
+      padding: 8px;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
-  <h1>Time Budget</h1>
-  <div>
-    <label><input type="radio" name="viewMode" id="dailyMode" checked onclick="setMode('daily')" /> Daily</label>
-    <label><input type="radio" name="viewMode" id="monthlyMode" onclick="setMode('monthly')" /> Monthly</label>
+  <!-- ========== LOGIN / SIGNUP SCREEN ========== -->
+  <div id="loginContainer">
+    <h1>Login to Time Budget App</h1>
+    <input type="text" id="loginUsername" placeholder="Username" /><br />
+    <input type="password" id="loginPassword" placeholder="Password" /><br />
+    <button onclick="loginUser()">Login</button>
+    <button onclick="signupUser()">Sign Up</button>
   </div>
-  <div id="dailyControls">
-    <label for="datePicker">Select Date:</label>
-    <input type="date" id="datePicker" />
+
+  <!-- ========== MAIN APP (HIDDEN UNTIL LOGGED IN) ========== -->
+  <div id="appContainer">
+    <button id="logoutBtn" onclick="logoutUser()">Logout</button>
+    <h1>Time Budget</h1>
+
+    <div>
+      <label><input type="radio" name="viewMode" id="dailyMode" checked onclick="setMode('daily')" /> Daily</label>
+      <label><input type="radio" name="viewMode" id="monthlyMode" onclick="setMode('monthly')" /> Monthly</label>
+    </div>
+
+    <div id="dailyControls">
+      <label for="datePicker">Select Date:</label>
+      <input type="date" id="datePicker" />
+    </div>
+    <div id="monthlyControls">
+      <label for="monthPicker">Select Month:</label>
+      <input type="month" id="monthPicker" />
+    </div>
+
+    <div id="controls">
+      <input type="text" id="activityName" placeholder="Enter activity" />
+      <button onclick="startActivity()" id="startBtn">Start</button>
+      <button onclick="stopActivity()" id="stopBtn">Stop</button>
+    </div>
+
+    <div>
+      <label><input type="checkbox" id="toggleMode" onchange="toggleLabelMode()" />
+        Show Percentage of Period</label>
+    </div>
+
+    <canvas id="timeChart"></canvas>
+    <div id="activityStats"></div>
   </div>
-  <div id="monthlyControls">
-    <label for="monthPicker">Select Month:</label>
-    <input type="month" id="monthPicker" />
-  </div>
-  <div id="controls">
-    <input type="text" id="activityName" placeholder="Enter activity" />
-    <button onclick="startActivity()" id="startBtn">Start</button>
-    <button onclick="stopActivity()" id="stopBtn">Stop</button>
-  </div>
-  <div>
-    <label><input type="checkbox" id="toggleMode" onchange="toggleLabelMode()" /> Show Percentage of Period</label>
-  </div>
-  <canvas id="timeChart"></canvas>
-  <div id="activityStats"></div>
 
   <script>
+    // ================================================
+    // 1) AUTHENTICATION LOGIC
+    // ================================================
+    function getUsers() {
+      return JSON.parse(localStorage.getItem('users') || '{}');
+    }
+    function saveUsers(users) {
+      localStorage.setItem('users', JSON.stringify(users));
+    }
+    function loginUser() {
+      const u = document.getElementById('loginUsername').value.trim();
+      const p = document.getElementById('loginPassword').value;
+      if (!u || !p) {
+        alert('Please enter both username and password.');
+        return;
+      }
+      const users = getUsers();
+      if (users[u] && users[u] === p) {
+        localStorage.setItem('loggedInUser', u);
+        showApp();
+      } else {
+        alert('Invalid credentials.');
+      }
+    }
+    function signupUser() {
+      const u = document.getElementById('loginUsername').value.trim();
+      const p = document.getElementById('loginPassword').value;
+      if (!u || !p) {
+        alert('Please enter both username and password.');
+        return;
+      }
+      const users = getUsers();
+      if (users[u]) {
+        alert('Username already exists. Pick a different one.');
+        return;
+      }
+      users[u] = p;
+      saveUsers(users);
+      localStorage.setItem('loggedInUser', u);
+      showApp();
+    }
+    function logoutUser() {
+      localStorage.removeItem('loggedInUser');
+      location.reload();
+    }
+    function showApp() {
+      document.getElementById('loginContainer').style.display = 'none';
+      document.getElementById('appContainer').style.display = 'block';
+      initializeApp();
+    }
+    function showLogin() {
+      document.getElementById('loginContainer').style.display = 'block';
+      document.getElementById('appContainer').style.display = 'none';
+    }
+    window.addEventListener('DOMContentLoaded', () => {
+      const user = localStorage.getItem('loggedInUser');
+      if (user) showApp();
+      else showLogin();
+    });
+
+    // ================================================
+    // 2) TIME BUDGET APP LOGIC
+    // ================================================
+    // CONSTANTS (must be defined before chart or any time‐logic runs)
     const SECONDS_IN_DAY = 86400;
     const genericColors = [
-      '#4caf50', '#2196f3', '#ff9800', '#e91e63', '#9c27b0',
-      '#00bcd4', '#ffc107', '#795548', '#607d8b'
+      '#4caf50', '#2196f3', '#ff9800', '#e91e63',
+      '#9c27b0', '#00bcd4', '#ffc107', '#795548', '#607d8b'
     ];
 
     let showPercent = false;
@@ -92,12 +192,13 @@
 
     function setMode(mode) {
       viewMode = mode;
-      document.getElementById('dailyControls').style.display = mode === 'daily' ? 'block' : 'none';
-      document.getElementById('monthlyControls').style.display = mode === 'monthly' ? 'block' : 'none';
+      document.getElementById('dailyControls').style.display =
+        mode === 'daily' ? 'block' : 'none';
+      document.getElementById('monthlyControls').style.display =
+        mode === 'monthly' ? 'block' : 'none';
       updateControls();
       updateChart();
     }
-
     function toggleLabelMode() {
       showPercent = document.getElementById('toggleMode').checked;
       updateChart();
@@ -106,38 +207,35 @@
     function getStartOfDayTimestamp(dateObj) {
       return new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate()).getTime();
     }
-
     function parseDateString(dateStr) {
       const [yyyy, mm, dd] = dateStr.split('-').map(Number);
       return new Date(yyyy, mm - 1, dd);
     }
-
     function parseMonthString(monthStr) {
       const [yyyy, mm] = monthStr.split('-').map(Number);
       return new Date(yyyy, mm - 1, 1);
     }
-
     function formatDateKey(dateObj) {
       const yyyy = dateObj.getFullYear();
       const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
       const dd = String(dateObj.getDate()).padStart(2, '0');
       return `${yyyy}-${mm}-${dd}`;
     }
-
     function formatSeconds(sec) {
-      const hours = Math.floor(sec / 3600);
-      const minutes = Math.floor((sec % 3600) / 60);
-      const seconds = sec % 60;
-      const hh = hours.toString().padStart(2, '0');
-      const mm = minutes.toString().padStart(2, '0');
-      const ss = seconds.toString().padStart(2, '0');
-      return `${hh}:${mm}:${ss}`;
+      const H = Math.floor(sec / 3600);
+      const M = Math.floor((sec % 3600) / 60);
+      const S = sec % 60;
+      return `${String(H).padStart(2, '0')}:${String(M).padStart(2, '0')}:${String(S).padStart(2, '0')}`;
+    }
+    function getStorageKey(base) {
+      const user = localStorage.getItem('loggedInUser');
+      return `${user}-${base}`;
     }
 
     let activityLog = [];
     let currentActivity = null;
     let viewedDate = new Date();
-    let lastCheckedDayKey = formatDateKey(new Date()); // track which day we last recognized
+    let lastCheckedDayKey = formatDateKey(new Date());
 
     const datePicker = document.getElementById('datePicker');
     const monthPicker = document.getElementById('monthPicker');
@@ -146,28 +244,25 @@
     const stopBtn = document.getElementById('stopBtn');
     const controlsDiv = document.getElementById('controls');
 
-    const ctx = document.getElementById('timeChart').getContext('2d');
-    const chart = new Chart(ctx, {
-      type: 'doughnut',
-      data: { labels: [], datasets: [{ data: [], backgroundColor: [], borderColor: '#eee', borderWidth: 1 }] },
-      options: {
-        responsive: true,
-        plugins: {
-          legend: { position: 'bottom' },
-          tooltip: { callbacks: { label: context => context.label || '' } }
-        },
-        animation: false,
-      }
-    });
+    // ─────────────────────────────────────────────────────────────────
+    // Chart variable (will be created in initializeApp)
+    let chart;
 
+    // ─────────────────────────────────────────────────────────────────
     function loadDateData(dateObj) {
-      const keyLog = `activityLog-${formatDateKey(dateObj)}`;
+      const keyLog = getStorageKey(`activityLog-${formatDateKey(dateObj)}`);
       const savedLog = JSON.parse(localStorage.getItem(keyLog) || '[]');
-      activityLog = savedLog.map(item => ({ name: item.name, start: item.start, end: item.end }));
+      activityLog = savedLog.map(item => ({
+        name: item.name,
+        start: item.start,
+        end: item.end
+      }));
 
       const todayKey = formatDateKey(new Date());
       if (viewMode === 'daily' && formatDateKey(dateObj) === todayKey) {
-        const savedCurrent = JSON.parse(localStorage.getItem('currentActivity') || 'null');
+        const savedCurrent = JSON.parse(
+          localStorage.getItem(getStorageKey('currentActivity')) || 'null'
+        );
         if (savedCurrent) {
           currentActivity = savedCurrent;
           activityNameInput.value = currentActivity.name;
@@ -180,34 +275,35 @@
     }
 
     function saveDateData(dateObj) {
-      const keyLog = `activityLog-${formatDateKey(dateObj)}`;
+      const keyLog = getStorageKey(`activityLog-${formatDateKey(dateObj)}`);
       localStorage.setItem(keyLog, JSON.stringify(activityLog));
 
       const todayKey = formatDateKey(new Date());
       if (viewMode === 'daily' && formatDateKey(dateObj) === todayKey) {
         if (currentActivity) {
-          localStorage.setItem('currentActivity', JSON.stringify(currentActivity));
+          localStorage.setItem(
+            getStorageKey('currentActivity'),
+            JSON.stringify(currentActivity)
+          );
         } else {
-          localStorage.removeItem('currentActivity');
+          localStorage.removeItem(getStorageKey('currentActivity'));
         }
       }
     }
 
     datePicker.addEventListener('change', () => {
-      const selectedStr = datePicker.value;
-      if (!selectedStr) return;
-      const selectedDate = parseDateString(selectedStr);
-      viewedDate = selectedDate;
+      const sel = datePicker.value;
+      if (!sel) return;
+      viewedDate = parseDateString(sel);
       loadDateData(viewedDate);
       updateControls();
       updateChart();
     });
 
     monthPicker.addEventListener('change', () => {
-      const selectedStr = monthPicker.value;
-      if (!selectedStr) return;
-      const selectedMonth = parseMonthString(selectedStr);
-      viewedDate = selectedMonth;
+      const sel = monthPicker.value;
+      if (!sel) return;
+      viewedDate = parseMonthString(sel);
       activityLog = [];
       currentActivity = null;
       updateControls();
@@ -215,7 +311,10 @@
     });
 
     function updateControls() {
-      if (viewMode === 'daily' && formatDateKey(viewedDate) === formatDateKey(new Date())) {
+      if (
+        viewMode === 'daily' &&
+        formatDateKey(viewedDate) === formatDateKey(new Date())
+      ) {
         controlsDiv.style.display = 'block';
       } else {
         controlsDiv.style.display = 'none';
@@ -249,7 +348,7 @@
       if (viewMode !== 'daily') return;
       if (!currentActivity) return;
       stopCurrentActivity();
-      activityNameInput.value = currentActivity ? currentActivity.name : '';
+      activityNameInput.value = '';
       updateChart();
     }
 
@@ -271,9 +370,9 @@
     }
 
     function updateChart() {
-      let labels = [];
-      let dataArray = [];
-      let backgroundColor = [];
+      const labels = [];
+      const dataArray = [];
+      const backgroundColor = [];
 
       if (viewMode === 'daily') {
         const now = Date.now();
@@ -302,7 +401,8 @@
 
         if (isToday && currentActivity) {
           const liveDuration = Math.floor((now - currentActivity.start) / 1000);
-          activityDurations[currentActivity.name] = (activityDurations[currentActivity.name] || 0) + liveDuration;
+          activityDurations[currentActivity.name] =
+            (activityDurations[currentActivity.name] || 0) + liveDuration;
           productiveSeconds += liveDuration;
         }
 
@@ -313,14 +413,14 @@
         const baseData = Object.values(activityDurations);
 
         baseLabels.forEach((name, idx) => {
-          const seconds = baseData[idx];
+          const secs = baseData[idx];
           if (showPercent) {
-            const pct = ((seconds / SECONDS_IN_DAY) * 100).toFixed(1);
+            const pct = ((secs / SECONDS_IN_DAY) * 100).toFixed(1);
             labels.push(`${name} (${pct}%)`);
           } else {
-            labels.push(`${name} (${formatSeconds(seconds)})`);
+            labels.push(`${name} (${formatSeconds(secs)})`);
           }
-          dataArray.push(seconds);
+          dataArray.push(secs);
         });
 
         if (unproductiveSeconds > 0) {
@@ -342,24 +442,30 @@
           dataArray.push(remainingSeconds);
         }
 
-        backgroundColor = labels.map(label => {
-          if (label.startsWith('Unaccounted')) return '#777';
-          if (label.startsWith('Remaining')) return 'rgba(0, 0, 0, 0)';
-          const name = label.split(' (')[0];
-          const activityIndex = baseLabels.indexOf(name);
-          return genericColors[activityIndex % genericColors.length];
+        labels.forEach(label => {
+          if (label.startsWith('Unaccounted')) {
+            backgroundColor.push('#777');
+          } else if (label.startsWith('Remaining')) {
+            backgroundColor.push('rgba(0, 0, 0, 0)');
+          } else {
+            const name = label.split(' (')[0];
+            const idx = baseLabels.indexOf(name);
+            backgroundColor.push(genericColors[idx % genericColors.length]);
+          }
         });
 
         updateActivityStats(activityDurations, elapsed, baseLabels);
       }
-      else {  // monthly mode
+      else {
         const year = viewedDate.getFullYear();
         const month = viewedDate.getMonth();
         const days = getDaysInMonth(year, month);
         const totalMonthSeconds = days * SECONDS_IN_DAY;
+
         const now = Date.now();
         const monthStart = new Date(year, month, 1).getTime();
-        const isCurrentMonth = month === new Date().getMonth() && year === new Date().getFullYear();
+        const isCurrentMonth =
+          month === new Date().getMonth() && year === new Date().getFullYear();
         const elapsedMonthSeconds = isCurrentMonth
           ? Math.floor((now - monthStart) / 1000)
           : totalMonthSeconds;
@@ -369,13 +475,14 @@
 
         for (let d = 1; d <= days; d++) {
           const dateObj = new Date(year, month, d);
-          const keyLog = `activityLog-${formatDateKey(dateObj)}`;
+          const keyLog = getStorageKey(`activityLog-${formatDateKey(dateObj)}`);
           const savedLog = JSON.parse(localStorage.getItem(keyLog) || '[]');
           savedLog.forEach(a => {
             const start = a.start;
-            const end = formatDateKey(dateObj) === formatDateKey(new Date())
-              ? (a.end || now)
-              : a.end;
+            const end =
+              formatDateKey(dateObj) === formatDateKey(new Date())
+                ? a.end || now
+                : a.end;
             const dayStart = new Date(year, month, d).getTime();
             const dayEnd = dayStart + SECONDS_IN_DAY * 1000;
             const clampedStart = Math.max(start, dayStart);
@@ -389,27 +496,33 @@
         }
 
         if (isCurrentMonth && currentActivity) {
-          const start = currentActivity.start;
-          const duration = Math.floor((now - start) / 1000);
-          activityDurations[currentActivity.name] = (activityDurations[currentActivity.name] || 0) + duration;
-          productiveSeconds += duration;
+          const liveDur = Math.floor((now - currentActivity.start) / 1000);
+          activityDurations[currentActivity.name] =
+            (activityDurations[currentActivity.name] || 0) + liveDur;
+          productiveSeconds += liveDur;
         }
 
-        const unproductiveSeconds = Math.max(0, elapsedMonthSeconds - productiveSeconds);
-        const remainingSeconds = Math.max(0, totalMonthSeconds - elapsedMonthSeconds);
+        const unproductiveSeconds = Math.max(
+          0,
+          elapsedMonthSeconds - productiveSeconds
+        );
+        const remainingSeconds = Math.max(
+          0,
+          totalMonthSeconds - elapsedMonthSeconds
+        );
 
         const baseLabels = Object.keys(activityDurations);
         const baseData = Object.values(activityDurations);
 
         baseLabels.forEach((name, idx) => {
-          const seconds = baseData[idx];
+          const secs = baseData[idx];
           if (showPercent) {
-            const pct = ((seconds / totalMonthSeconds) * 100).toFixed(1);
+            const pct = ((secs / totalMonthSeconds) * 100).toFixed(1);
             labels.push(`${name} (${pct}%)`);
           } else {
-            labels.push(`${name} (${formatSeconds(seconds)})`);
+            labels.push(`${name} (${formatSeconds(secs)})`);
           }
-          dataArray.push(seconds);
+          dataArray.push(secs);
         });
 
         if (unproductiveSeconds > 0) {
@@ -431,42 +544,53 @@
           dataArray.push(remainingSeconds);
         }
 
-        backgroundColor = labels.map(label => {
-          if (label.startsWith('Unaccounted')) return '#777';
-          if (label.startsWith('Remaining')) return 'rgba(0, 0, 0, 0)';
-          const name = label.split(' (')[0];
-          const activityIndex = baseLabels.indexOf(name);
-          return genericColors[activityIndex % genericColors.length];
+        labels.forEach(label => {
+          if (label.startsWith('Unaccounted')) {
+            backgroundColor.push('#777');
+          } else if (label.startsWith('Remaining')) {
+            backgroundColor.push('rgba(0, 0, 0, 0)');
+          } else {
+            const name = label.split(' (')[0];
+            const idx = baseLabels.indexOf(name);
+            backgroundColor.push(genericColors[idx % genericColors.length]);
+          }
         });
 
-        updateActivityStats(activityDurations, isCurrentMonth ? elapsedMonthSeconds : totalMonthSeconds, baseLabels);
+        updateActivityStats(
+          activityDurations,
+          isCurrentMonth ? elapsedMonthSeconds : totalMonthSeconds,
+          baseLabels
+        );
       }
 
-      chart.data.labels = labels;
-      chart.data.datasets[0].data = dataArray;
-      chart.data.datasets[0].backgroundColor = backgroundColor;
-      chart.update();
+      if (chart) {
+        chart.data.labels = labels;
+        chart.data.datasets[0].data = dataArray;
+        chart.data.datasets[0].backgroundColor = backgroundColor;
+        chart.update();
+      }
     }
 
     function updateActivityStats(durations, periodSeconds, baseLabels) {
       const statsDiv = document.getElementById('activityStats');
       let html;
+
       if (viewMode === 'daily') {
         html = '<table><tr><th>Activity</th><th>Time</th><th>% of Elapsed</th><th>Delete</th></tr>';
         const allLabels = Object.keys(durations);
         allLabels.forEach((name, idx) => {
-          const seconds = durations[name];
-          const pct = ((seconds / periodSeconds) * 100).toFixed(1);
+          const secs = durations[name];
+          const pct = ((secs / periodSeconds) * 100).toFixed(1);
           let color;
           if (name === 'Unaccounted') color = '#777';
           else {
-            const activityIndex = baseLabels.indexOf(name);
-            color = genericColors[activityIndex % genericColors.length];
+            const ai = baseLabels.indexOf(name);
+            color = genericColors[ai % genericColors.length];
           }
           html += `
             <tr>
               <td class="clickable" onclick="selectActivity('${encodeURIComponent(name)}')" style="color: ${color}">${name}</td>
-              <td>${formatSeconds(seconds)}</td>
+              <td>${formatSeconds(secs)}</td>
               <td>${pct}%</td>
               <td><button class="delete-btn" onclick="deleteActivity('${encodeURIComponent(name)}')">&#x2716;</button></td>
             </tr>`;
@@ -476,50 +600,44 @@
         html = '<table><tr><th>Activity</th><th>Time</th><th>% of Elapsed</th></tr>';
         const allLabels = Object.keys(durations);
         allLabels.forEach((name, idx) => {
-          const seconds = durations[name];
-          const pct = ((seconds / periodSeconds) * 100).toFixed(1);
+          const secs = durations[name];
+          const pct = ((secs / periodSeconds) * 100).toFixed(1);
           let color;
           if (name === 'Unaccounted') color = '#777';
           else {
-            const activityIndex = baseLabels.indexOf(name);
-            color = genericColors[activityIndex % genericColors.length];
+            const ai = baseLabels.indexOf(name);
+            color = genericColors[ai % genericColors.length];
           }
           html += `
             <tr>
               <td style="color: ${color}">${name}</td>
-              <td>${formatSeconds(seconds)}</td>
+              <td>${formatSeconds(secs)}</td>
               <td>${pct}%</td>
             </tr>`;
         });
         html += '</table>';
       }
+
       statsDiv.innerHTML = html;
     }
 
-    // ───────────────────────────────────────────────────────────────
-    // Midnight rollover (carry-over version):
-    // When we detect that “today” flipped to a new day:
-    //  1) If there’s a running activity, first push a slice ending at midnight into yesterday’s log.
-    //  2) Immediately re-start that same activity at midnight (carry-over).
-    //  3) Advance viewedDate to today, update the datePicker, reload data, and keep currentActivity alive.
-    // ───────────────────────────────────────────────────────────────
+    // ================================================
+    // 3) MIDNIGHT ROLLOVER (CARRY-OVER LOGIC)
+    // ================================================
     setInterval(() => {
       const now = Date.now();
       const today = new Date();
       const todayKey = formatDateKey(today);
-      const midnightTimestamp = getStartOfDayTimestamp(today); // 00:00 of today
+      const midnightTimestamp = getStartOfDayTimestamp(today); // 00:00 today
 
-      // If we've crossed into a new “today”
       if (todayKey !== lastCheckedDayKey && now >= midnightTimestamp) {
-        // 1) If there was a saved “currentActivity” from yesterday, split it at midnight:
-        const savedCurrent = JSON.parse(localStorage.getItem('currentActivity') || 'null');
+        const savedCurrent = JSON.parse(
+          localStorage.getItem(getStorageKey('currentActivity')) || 'null'
+        );
         if (savedCurrent) {
-          // a) Create a record for “yesterday” that ends exactly at midnight
-          const yesterdayDate = new Date(midnightTimestamp - SECONDS_IN_DAY * 1000);
-          const prevKey = `activityLog-${formatDateKey(yesterdayDate)}`;
+          const yDay = new Date(midnightTimestamp - SECONDS_IN_DAY * 1000);
+          const prevKey = getStorageKey(`activityLog-${formatDateKey(yDay)}`);
           const prevLog = JSON.parse(localStorage.getItem(prevKey) || '[]');
-
-          // push the slice [ savedCurrent.start → midnight ]
           prevLog.push({
             name: savedCurrent.name,
             start: savedCurrent.start,
@@ -527,16 +645,13 @@
           });
           localStorage.setItem(prevKey, JSON.stringify(prevLog));
 
-          // b) Now carry over into today: set currentActivity to start at midnight
-          currentActivity = {
-            name: savedCurrent.name,
-            start: midnightTimestamp
-          };
-          // Save the “today’s currentActivity” back to localStorage
-          localStorage.setItem('currentActivity', JSON.stringify(currentActivity));
+          currentActivity = { name: savedCurrent.name, start: midnightTimestamp };
+          localStorage.setItem(
+            getStorageKey('currentActivity'),
+            JSON.stringify(currentActivity)
+          );
         }
 
-        // 2) Advance viewedDate to today, update the datePicker, reload data
         viewedDate = new Date(midnightTimestamp);
         const todayISO = new Date(midnightTimestamp).toISOString().split('T')[0];
         datePicker.value = todayISO;
@@ -546,11 +661,28 @@
 
         lastCheckedDayKey = todayKey;
       }
-    }, 60 * 1000); // check once per minute
+    }, 60 * 1000);
 
-    window.addEventListener('DOMContentLoaded', () => {
+    // ================================================
+    // 4) INITIALIZE ON PAGE LOAD
+    // ================================================
+    function initializeApp() {
+      // Create the chart only when app is shown:
+      const ctx = document.getElementById('timeChart').getContext('2d');
+      chart = new Chart(ctx, {
+        type: 'doughnut',
+        data: { labels: [], datasets: [{ data: [], backgroundColor: [], borderColor: '#eee', borderWidth: 1 }] },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: { position: 'bottom' },
+            tooltip: { callbacks: { label: ctx => ctx.label || '' } }
+          },
+          animation: false,
+        }
+      });
+
       const today = new Date();
-      // Fix for local timezone offset:
       const offsetMinutes = today.getTimezoneOffset();
       const localMid = new Date(today.getTime() - offsetMinutes * 60000);
       const todayStr = localMid.toISOString().split('T')[0];
@@ -565,7 +697,7 @@
       updateControls();
       updateChart();
       setInterval(updateChart, 1000);
-    });
+    }
   </script>
 </body>
 </html>
