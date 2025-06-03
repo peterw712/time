@@ -46,6 +46,10 @@
       cursor: pointer;
       font-size: 1rem;
     }
+    .clickable {
+      cursor: pointer;
+      text-decoration: underline;
+    }
   </style>
 </head>
 <body>
@@ -57,6 +61,9 @@
     <button onclick="startActivity()" id="startBtn">Start</button>
     <button onclick="stopActivity()" id="stopBtn">Stop</button>
   </div>
+  <div>
+    <label><input type="checkbox" id="toggleMode" onchange="toggleLabelMode()" /> Show Percentage of Day</label>
+  </div>
   <canvas id="timeChart"></canvas>
   <div id="activityStats"></div>
 
@@ -65,6 +72,13 @@
     const genericColors = [
       '#4caf50', '#2196f3', '#ff9800', '#e91e63', '#9c27b0', '#00bcd4', '#ffc107', '#795548', '#607d8b'
     ];
+
+    let showPercent = false;
+
+    function toggleLabelMode() {
+      showPercent = document.getElementById('toggleMode').checked;
+      updateChart();
+    }
 
     function getStartOfDayTimestamp(dateObj) {
       const d = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
@@ -93,19 +107,16 @@
       return `${hh}:${mm}:${ss}`;
     }
 
-    // Variables to hold state
-    let activityLog = []; // For currently viewed date
-    let currentActivity = null; // Only valid for today
-    let viewedDate = new Date(); // JS Date object
+    let activityLog = [];
+    let currentActivity = null;
+    let viewedDate = new Date();
 
-    // Elements
     const datePicker = document.getElementById('datePicker');
     const activityNameInput = document.getElementById('activityName');
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
     const controlsDiv = document.getElementById('controls');
 
-    // Initialize Chart
     const ctx = document.getElementById('timeChart').getContext('2d');
     const chart = new Chart(ctx, {
       type: 'doughnut',
@@ -118,27 +129,22 @@
             labels: { filter: (legendItem) => legendItem.text !== 'Remaining' }
           },
           tooltip: {
-            callbacks: {
-              label: function(context) { return context.label || ''; }
-            }
+            callbacks: { label: function(context) { return context.label || ''; } }
           }
         },
         animation: false,
       }
     });
 
-    // Load data for a specific date
     function loadDateData(dateObj) {
       const keyLog = `activityLog-${formatDateKey(dateObj)}`;
       const savedLog = JSON.parse(localStorage.getItem(keyLog) || '[]');
       activityLog = savedLog.map(item => ({ name: item.name, start: item.start, end: item.end }));
-      // Only restore currentActivity if date is today
       const todayKey = formatDateKey(new Date());
       if (formatDateKey(dateObj) === todayKey) {
         const savedCurrent = JSON.parse(localStorage.getItem('currentActivity') || 'null');
         if (savedCurrent) {
           currentActivity = savedCurrent;
-          // Persist activity name in input
           activityNameInput.value = currentActivity.name;
         } else {
           currentActivity = null;
@@ -148,18 +154,15 @@
       }
     }
 
-    // Save data for a specific date
     function saveDateData(dateObj) {
       const keyLog = `activityLog-${formatDateKey(dateObj)}`;
       localStorage.setItem(keyLog, JSON.stringify(activityLog));
-      // Only store currentActivity for today
       const todayKey = formatDateKey(new Date());
       if (formatDateKey(dateObj) === todayKey) {
         localStorage.setItem('currentActivity', JSON.stringify(currentActivity));
       }
     }
 
-    // Handle datePicker changes
     datePicker.addEventListener('change', () => {
       const selectedStr = datePicker.value;
       if (!selectedStr) return;
@@ -170,7 +173,6 @@
       updateChart();
     });
 
-    // Update control visibility based on whether viewing today
     function updateControls() {
       const todayKey = formatDateKey(new Date());
       if (formatDateKey(viewedDate) === todayKey) {
@@ -183,35 +185,47 @@
       }
     }
 
-    // Start an activity (only for today)
+    function stopCurrentActivity() {
+      if (!currentActivity) return;
+      currentActivity.end = Date.now();
+      activityLog.push(currentActivity);
+      currentActivity = null;
+    }
+
     function startActivity() {
       if (formatDateKey(viewedDate) !== formatDateKey(new Date())) return;
       const name = activityNameInput.value.trim();
-      if (!name || currentActivity) return;
+      if (!name) return;
+      if (currentActivity && currentActivity.name === name) return;
+      if (currentActivity) {
+        stopCurrentActivity();
+      }
       currentActivity = { name, start: Date.now() };
+      activityNameInput.value = name;
       saveDateData(viewedDate);
     }
 
-    // Stop an activity (only for today)
     function stopActivity() {
       if (!currentActivity) return;
       currentActivity.end = Date.now();
       activityLog.push(currentActivity);
-      // Keep input value as current activity name for persistence
       activityNameInput.value = currentActivity.name;
       currentActivity = null;
       saveDateData(viewedDate);
     }
 
-    // Delete an activity (remove all entries for that name)
-    function deleteActivity(name) {
-      // Filter out entries matching name
+    function selectActivity(encodedName) {
+      const name = decodeURIComponent(encodedName);
+      activityNameInput.value = name;
+    }
+
+    function deleteActivity(encodedName) {
+      const name = decodeURIComponent(encodedName);
       activityLog = activityLog.filter(a => a.name !== name);
       saveDateData(viewedDate);
       updateChart();
     }
 
-    // Update chart based on activityLog and currentActivity for viewedDate
     function updateChart() {
       const now = Date.now();
       const startOfDay = getStartOfDayTimestamp(viewedDate);
@@ -241,7 +255,6 @@
       const unproductiveSeconds = Math.max(0, elapsed - productiveSeconds);
       const remainingSeconds = isToday ? Math.max(0, SECONDS_IN_DAY - elapsed) : 0;
 
-      // Build display labels with formatted time
       const baseLabels = Object.keys(activityDurations);
       const baseData = Object.values(activityDurations);
       const labels = [];
@@ -249,16 +262,31 @@
 
       baseLabels.forEach((name, idx) => {
         const seconds = baseData[idx];
-        labels.push(`${name} (${formatSeconds(seconds)})`);
+        if (showPercent) {
+          const pct = ((seconds / SECONDS_IN_DAY) * 100).toFixed(1);
+          labels.push(`${name} (${pct}%)`);
+        } else {
+          labels.push(`${name} (${formatSeconds(seconds)})`);
+        }
         dataArray.push(seconds);
       });
 
       if (unproductiveSeconds > 0) {
-        labels.push(`Unproductive (${formatSeconds(unproductiveSeconds)})`);
+        if (showPercent) {
+          const pctU = ((unproductiveSeconds / SECONDS_IN_DAY) * 100).toFixed(1);
+          labels.push(`Unproductive (${pctU}%)`);
+        } else {
+          labels.push(`Unproductive (${formatSeconds(unproductiveSeconds)})`);
+        }
         dataArray.push(unproductiveSeconds);
       }
       if (remainingSeconds > 0) {
-        labels.push(`Remaining (${formatSeconds(remainingSeconds)})`);
+        if (showPercent) {
+          const pctR = ((remainingSeconds / SECONDS_IN_DAY) * 100).toFixed(1);
+          labels.push(`Remaining (${pctR}%)`);
+        } else {
+          labels.push(`Remaining (${formatSeconds(remainingSeconds)})`);
+        }
         dataArray.push(remainingSeconds);
       }
 
@@ -275,35 +303,35 @@
       chart.data.datasets[0].backgroundColor = backgroundColor;
       chart.update();
 
-      updateActivityStats(activityDurations, elapsed);
+      updateActivityStats(activityDurations, elapsed, baseLabels);
     }
 
-    function updateActivityStats(durations, elapsed) {
+    function updateActivityStats(durations, elapsed, baseLabels) {
       const statsDiv = document.getElementById('activityStats');
       let html = '<table><tr><th>Activity</th><th>Time</th><th>% of Elapsed</th><th>Delete</th></tr>';
-      for (const [name, seconds] of Object.entries(durations)) {
+      const allLabels = Object.keys(durations);
+      allLabels.forEach((name, idx) => {
+        const seconds = durations[name];
         const pct = elapsed > 0 ? ((seconds / elapsed) * 100).toFixed(1) : '0.0';
+        let color;
+        if (name === 'Unproductive') color = '#777';
+        else if (name === 'Remaining') color = 'transparent';
+        else {
+          const activityIndex = baseLabels.indexOf(name);
+          color = genericColors[activityIndex % genericColors.length];
+        }
         html += `
           <tr>
-            <td>${name}</td>
+            <td class="clickable" onclick="selectActivity('${encodeURIComponent(name)}')" style="color: ${color}">${name}</td>
             <td>${formatSeconds(seconds)}</td>
             <td>${pct}%</td>
             <td><button class="delete-btn" onclick="deleteActivity('${encodeURIComponent(name)}')">&#x2716;</button></td>
           </tr>`;
-      }
+      });
       html += '</table>';
       statsDiv.innerHTML = html;
     }
 
-    // Adjust deleteActivity to decode name
-    function deleteActivity(encodedName) {
-      const name = decodeURIComponent(encodedName);
-      activityLog = activityLog.filter(a => a.name !== name);
-      saveDateData(viewedDate);
-      updateChart();
-    }
-
-    // At midnight, if viewing today, clear data and reload
     setInterval(() => {
       if (formatDateKey(new Date()) === formatDateKey(viewedDate)) {
         const now = Date.now();
@@ -315,11 +343,9 @@
           updateChart();
         }
       }
-    }, 60000); // check every minute
+    }, 60000);
 
-    // Initialize page
     window.addEventListener('DOMContentLoaded', () => {
-      // Compute local YYYY-MM-DD correctly
       const today = new Date();
       const offsetMinutes = today.getTimezoneOffset();
       const localMid = new Date(today.getTime() - offsetMinutes * 60000);
