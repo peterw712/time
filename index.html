@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Time Budget App</title>
+  <title>Time Budget App (Carry-Over Enabled)</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     body {
@@ -56,7 +56,7 @@
   </style>
 </head>
 <body>
-  <h1>Time Budget</h1>
+  <h1>Time Budget (with Carry-Over)</h1>
   <div>
     <label><input type="radio" name="viewMode" id="dailyMode" checked onclick="setMode('daily')" /> Daily</label>
     <label><input type="radio" name="viewMode" id="monthlyMode" onclick="setMode('monthly')" /> Monthly</label>
@@ -83,7 +83,8 @@
   <script>
     const SECONDS_IN_DAY = 86400;
     const genericColors = [
-      '#4caf50', '#2196f3', '#ff9800', '#e91e63', '#9c27b0', '#00bcd4', '#ffc107', '#795548', '#607d8b'
+      '#4caf50', '#2196f3', '#ff9800', '#e91e63', '#9c27b0',
+      '#00bcd4', '#ffc107', '#795548', '#607d8b'
     ];
 
     let showPercent = false;
@@ -103,8 +104,7 @@
     }
 
     function getStartOfDayTimestamp(dateObj) {
-      const d = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
-      return d.getTime();
+      return new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate()).getTime();
     }
 
     function parseDateString(dateStr) {
@@ -137,6 +137,7 @@
     let activityLog = [];
     let currentActivity = null;
     let viewedDate = new Date();
+    let lastCheckedDayKey = formatDateKey(new Date()); // track which day we last recognized
 
     const datePicker = document.getElementById('datePicker');
     const monthPicker = document.getElementById('monthPicker');
@@ -163,6 +164,7 @@
       const keyLog = `activityLog-${formatDateKey(dateObj)}`;
       const savedLog = JSON.parse(localStorage.getItem(keyLog) || '[]');
       activityLog = savedLog.map(item => ({ name: item.name, start: item.start, end: item.end }));
+
       const todayKey = formatDateKey(new Date());
       if (viewMode === 'daily' && formatDateKey(dateObj) === todayKey) {
         const savedCurrent = JSON.parse(localStorage.getItem('currentActivity') || 'null');
@@ -180,9 +182,14 @@
     function saveDateData(dateObj) {
       const keyLog = `activityLog-${formatDateKey(dateObj)}`;
       localStorage.setItem(keyLog, JSON.stringify(activityLog));
+
       const todayKey = formatDateKey(new Date());
       if (viewMode === 'daily' && formatDateKey(dateObj) === todayKey) {
-        localStorage.setItem('currentActivity', JSON.stringify(currentActivity));
+        if (currentActivity) {
+          localStorage.setItem('currentActivity', JSON.stringify(currentActivity));
+        } else {
+          localStorage.removeItem('currentActivity');
+        }
       }
     }
 
@@ -215,9 +222,9 @@
       }
     }
 
-    function stopCurrentActivity() {
+    function stopCurrentActivity(atTimestamp = Date.now()) {
       if (!currentActivity) return;
-      currentActivity.end = Date.now();
+      currentActivity.end = atTimestamp;
       activityLog.push(currentActivity);
       saveDateData(viewedDate);
       currentActivity = null;
@@ -271,17 +278,21 @@
       if (viewMode === 'daily') {
         const now = Date.now();
         const startOfDay = getStartOfDayTimestamp(viewedDate);
-        const isToday = formatDateKey(viewedDate) === formatDateKey(new Date());
-        const totalElapsedSeconds = isToday ? Math.floor((now - startOfDay) / 1000) : SECONDS_IN_DAY;
+        const todayKey = formatDateKey(new Date());
+        const isToday = formatDateKey(viewedDate) === todayKey;
+        const totalElapsedSeconds = isToday
+          ? Math.floor((now - startOfDay) / 1000)
+          : SECONDS_IN_DAY;
         const elapsed = Math.min(totalElapsedSeconds, SECONDS_IN_DAY);
 
-        // Do not reload data here to preserve currentActivity
         const activityDurations = {};
         let productiveSeconds = 0;
 
         activityLog.forEach(a => {
           const start = Math.max(a.start, startOfDay);
-          const end = isToday ? Math.min(a.end || now, now) : Math.min(a.end, startOfDay + SECONDS_IN_DAY * 1000);
+          const end = isToday
+            ? Math.min(a.end || now, now)
+            : Math.min(a.end, startOfDay + SECONDS_IN_DAY * 1000);
           if (end > start) {
             const duration = Math.floor((end - start) / 1000);
             activityDurations[a.name] = (activityDurations[a.name] || 0) + duration;
@@ -340,7 +351,8 @@
         });
 
         updateActivityStats(activityDurations, elapsed, baseLabels);
-      } else {
+      }
+      else {  // monthly mode
         const year = viewedDate.getFullYear();
         const month = viewedDate.getMonth();
         const days = getDaysInMonth(year, month);
@@ -348,7 +360,10 @@
         const now = Date.now();
         const monthStart = new Date(year, month, 1).getTime();
         const isCurrentMonth = month === new Date().getMonth() && year === new Date().getFullYear();
-        const elapsedMonthSeconds = isCurrentMonth ? Math.floor((now - monthStart) / 1000) : totalMonthSeconds;
+        const elapsedMonthSeconds = isCurrentMonth
+          ? Math.floor((now - monthStart) / 1000)
+          : totalMonthSeconds;
+
         const activityDurations = {};
         let productiveSeconds = 0;
 
@@ -358,12 +373,9 @@
           const savedLog = JSON.parse(localStorage.getItem(keyLog) || '[]');
           savedLog.forEach(a => {
             const start = a.start;
-            let end;
-            if (formatDateKey(dateObj) === formatDateKey(new Date())) {
-              end = a.end || now;
-            } else {
-              end = a.end;
-            }
+            const end = formatDateKey(dateObj) === formatDateKey(new Date())
+              ? (a.end || now)
+              : a.end;
             const dayStart = new Date(year, month, d).getTime();
             const dayEnd = dayStart + SECONDS_IN_DAY * 1000;
             const clampedStart = Math.max(start, dayStart);
@@ -440,7 +452,7 @@
       const statsDiv = document.getElementById('activityStats');
       let html;
       if (viewMode === 'daily') {
-        html = '<table><tr><th>Activity</th><th>Time</th><th>% of Period</th><th>Delete</th></tr>';
+        html = '<table><tr><th>Activity</th><th>Time</th><th>% of Elapsed</th><th>Delete</th></tr>';
         const allLabels = Object.keys(durations);
         allLabels.forEach((name, idx) => {
           const seconds = durations[name];
@@ -461,7 +473,7 @@
         });
         html += '</table>';
       } else {
-        html = '<table><tr><th>Activity</th><th>Time</th><th>% of Period</th></tr>';
+        html = '<table><tr><th>Activity</th><th>Time</th><th>% of Elapsed</th></tr>';
         const allLabels = Object.keys(durations);
         allLabels.forEach((name, idx) => {
           const seconds = durations[name];
@@ -484,21 +496,61 @@
       statsDiv.innerHTML = html;
     }
 
+    // ───────────────────────────────────────────────────────────────
+    // Midnight rollover (carry-over version):
+    // When we detect that “today” flipped to a new day:
+    //  1) If there’s a running activity, first push a slice ending at midnight into yesterday’s log.
+    //  2) Immediately re-start that same activity at midnight (carry-over).
+    //  3) Advance viewedDate to today, update the datePicker, reload data, and keep currentActivity alive.
+    // ───────────────────────────────────────────────────────────────
     setInterval(() => {
-      if (viewMode === 'daily' && formatDateKey(new Date()) === formatDateKey(viewedDate)) {
-        const now = Date.now();
-        const startOfDay = getStartOfDayTimestamp(new Date());
-        if (now >= startOfDay + SECONDS_IN_DAY * 1000) {
-          activityLog = [];
-          currentActivity = null;
-          saveDateData(viewedDate);
-          updateChart();
+      const now = Date.now();
+      const today = new Date();
+      const todayKey = formatDateKey(today);
+      const midnightTimestamp = getStartOfDayTimestamp(today); // 00:00 of today
+
+      // If we've crossed into a new “today”
+      if (todayKey !== lastCheckedDayKey && now >= midnightTimestamp) {
+        // 1) If there was a saved “currentActivity” from yesterday, split it at midnight:
+        const savedCurrent = JSON.parse(localStorage.getItem('currentActivity') || 'null');
+        if (savedCurrent) {
+          // a) Create a record for “yesterday” that ends exactly at midnight
+          const yesterdayDate = new Date(midnightTimestamp - SECONDS_IN_DAY * 1000);
+          const prevKey = `activityLog-${formatDateKey(yesterdayDate)}`;
+          const prevLog = JSON.parse(localStorage.getItem(prevKey) || '[]');
+
+          // push the slice [ savedCurrent.start → midnight ]
+          prevLog.push({
+            name: savedCurrent.name,
+            start: savedCurrent.start,
+            end: midnightTimestamp
+          });
+          localStorage.setItem(prevKey, JSON.stringify(prevLog));
+
+          // b) Now carry over into today: set currentActivity to start at midnight
+          currentActivity = {
+            name: savedCurrent.name,
+            start: midnightTimestamp
+          };
+          // Save the “today’s currentActivity” back to localStorage
+          localStorage.setItem('currentActivity', JSON.stringify(currentActivity));
         }
+
+        // 2) Advance viewedDate to today, update the datePicker, reload data
+        viewedDate = new Date(midnightTimestamp);
+        const todayISO = new Date(midnightTimestamp).toISOString().split('T')[0];
+        datePicker.value = todayISO;
+        loadDateData(viewedDate);
+        updateControls();
+        updateChart();
+
+        lastCheckedDayKey = todayKey;
       }
-    }, 60000);
+    }, 60 * 1000); // check once per minute
 
     window.addEventListener('DOMContentLoaded', () => {
       const today = new Date();
+      // Fix for local timezone offset:
       const offsetMinutes = today.getTimezoneOffset();
       const localMid = new Date(today.getTime() - offsetMinutes * 60000);
       const todayStr = localMid.toISOString().split('T')[0];
