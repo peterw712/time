@@ -50,19 +50,32 @@
       cursor: pointer;
       text-decoration: underline;
     }
+    #monthlyControls {
+      display: none;
+    }
   </style>
 </head>
 <body>
   <h1>Time Budget</h1>
-  <label for="datePicker">Select Date:</label>
-  <input type="date" id="datePicker" />
+  <div>
+    <label><input type="radio" name="viewMode" id="dailyMode" checked onclick="setMode('daily')" /> Daily</label>
+    <label><input type="radio" name="viewMode" id="monthlyMode" onclick="setMode('monthly')" /> Monthly</label>
+  </div>
+  <div id="dailyControls">
+    <label for="datePicker">Select Date:</label>
+    <input type="date" id="datePicker" />
+  </div>
+  <div id="monthlyControls">
+    <label for="monthPicker">Select Month:</label>
+    <input type="month" id="monthPicker" />
+  </div>
   <div id="controls">
     <input type="text" id="activityName" placeholder="Enter activity" />
     <button onclick="startActivity()" id="startBtn">Start</button>
     <button onclick="stopActivity()" id="stopBtn">Stop</button>
   </div>
   <div>
-    <label><input type="checkbox" id="toggleMode" onchange="toggleLabelMode()" /> Show Percentage of Day</label>
+    <label><input type="checkbox" id="toggleMode" onchange="toggleLabelMode()" /> Show Percentage of Period</label>
   </div>
   <canvas id="timeChart"></canvas>
   <div id="activityStats"></div>
@@ -74,6 +87,15 @@
     ];
 
     let showPercent = false;
+    let viewMode = 'daily'; // 'daily' or 'monthly'
+
+    function setMode(mode) {
+      viewMode = mode;
+      document.getElementById('dailyControls').style.display = mode === 'daily' ? 'block' : 'none';
+      document.getElementById('monthlyControls').style.display = mode === 'monthly' ? 'block' : 'none';
+      updateControls();
+      updateChart();
+    }
 
     function toggleLabelMode() {
       showPercent = document.getElementById('toggleMode').checked;
@@ -88,6 +110,11 @@
     function parseDateString(dateStr) {
       const [yyyy, mm, dd] = dateStr.split('-').map(Number);
       return new Date(yyyy, mm - 1, dd);
+    }
+
+    function parseMonthString(monthStr) {
+      const [yyyy, mm] = monthStr.split('-').map(Number);
+      return new Date(yyyy, mm - 1, 1);
     }
 
     function formatDateKey(dateObj) {
@@ -112,6 +139,7 @@
     let viewedDate = new Date();
 
     const datePicker = document.getElementById('datePicker');
+    const monthPicker = document.getElementById('monthPicker');
     const activityNameInput = document.getElementById('activityName');
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
@@ -124,13 +152,8 @@
       options: {
         responsive: true,
         plugins: {
-          legend: {
-            position: 'bottom',
-            labels: { filter: (legendItem) => legendItem.text !== 'Remaining' }
-          },
-          tooltip: {
-            callbacks: { label: function(context) { return context.label || ''; } }
-          }
+          legend: { position: 'bottom' },
+          tooltip: { callbacks: { label: context => context.label || '' } }
         },
         animation: false,
       }
@@ -141,7 +164,7 @@
       const savedLog = JSON.parse(localStorage.getItem(keyLog) || '[]');
       activityLog = savedLog.map(item => ({ name: item.name, start: item.start, end: item.end }));
       const todayKey = formatDateKey(new Date());
-      if (formatDateKey(dateObj) === todayKey) {
+      if (viewMode === 'daily' && formatDateKey(dateObj) === todayKey) {
         const savedCurrent = JSON.parse(localStorage.getItem('currentActivity') || 'null');
         if (savedCurrent) {
           currentActivity = savedCurrent;
@@ -158,7 +181,7 @@
       const keyLog = `activityLog-${formatDateKey(dateObj)}`;
       localStorage.setItem(keyLog, JSON.stringify(activityLog));
       const todayKey = formatDateKey(new Date());
-      if (formatDateKey(dateObj) === todayKey) {
+      if (viewMode === 'daily' && formatDateKey(dateObj) === todayKey) {
         localStorage.setItem('currentActivity', JSON.stringify(currentActivity));
       }
     }
@@ -173,13 +196,20 @@
       updateChart();
     });
 
+    monthPicker.addEventListener('change', () => {
+      const selectedStr = monthPicker.value;
+      if (!selectedStr) return;
+      const selectedMonth = parseMonthString(selectedStr);
+      viewedDate = selectedMonth;
+      activityLog = [];
+      currentActivity = null;
+      updateControls();
+      updateChart();
+    });
+
     function updateControls() {
-      const todayKey = formatDateKey(new Date());
-      if (formatDateKey(viewedDate) === todayKey) {
+      if (viewMode === 'daily' && formatDateKey(viewedDate) === formatDateKey(new Date())) {
         controlsDiv.style.display = 'block';
-        startBtn.disabled = false;
-        stopBtn.disabled = false;
-        activityNameInput.disabled = false;
       } else {
         controlsDiv.style.display = 'none';
       }
@@ -189,10 +219,12 @@
       if (!currentActivity) return;
       currentActivity.end = Date.now();
       activityLog.push(currentActivity);
+      saveDateData(viewedDate);
       currentActivity = null;
     }
 
     function startActivity() {
+      if (viewMode !== 'daily') return;
       if (formatDateKey(viewedDate) !== formatDateKey(new Date())) return;
       const name = activityNameInput.value.trim();
       if (!name) return;
@@ -203,15 +235,15 @@
       currentActivity = { name, start: Date.now() };
       activityNameInput.value = name;
       saveDateData(viewedDate);
+      updateChart();
     }
 
     function stopActivity() {
+      if (viewMode !== 'daily') return;
       if (!currentActivity) return;
-      currentActivity.end = Date.now();
-      activityLog.push(currentActivity);
-      activityNameInput.value = currentActivity.name;
-      currentActivity = null;
-      saveDateData(viewedDate);
+      stopCurrentActivity();
+      activityNameInput.value = currentActivity ? currentActivity.name : '';
+      updateChart();
     }
 
     function selectActivity(encodedName) {
@@ -220,120 +252,240 @@
     }
 
     function deleteActivity(encodedName) {
+      if (viewMode !== 'daily') return;
       const name = decodeURIComponent(encodedName);
       activityLog = activityLog.filter(a => a.name !== name);
       saveDateData(viewedDate);
       updateChart();
     }
 
+    function getDaysInMonth(year, month) {
+      return new Date(year, month + 1, 0).getDate();
+    }
+
     function updateChart() {
-      const now = Date.now();
-      const startOfDay = getStartOfDayTimestamp(viewedDate);
-      const isToday = formatDateKey(viewedDate) === formatDateKey(new Date());
-      const totalElapsedSeconds = isToday ? Math.floor((now - startOfDay) / 1000) : SECONDS_IN_DAY;
-      const elapsed = Math.min(totalElapsedSeconds, SECONDS_IN_DAY);
+      let labels = [];
+      let dataArray = [];
+      let backgroundColor = [];
 
-      const activityDurations = {};
-      let productiveSeconds = 0;
+      if (viewMode === 'daily') {
+        const now = Date.now();
+        const startOfDay = getStartOfDayTimestamp(viewedDate);
+        const isToday = formatDateKey(viewedDate) === formatDateKey(new Date());
+        const totalElapsedSeconds = isToday ? Math.floor((now - startOfDay) / 1000) : SECONDS_IN_DAY;
+        const elapsed = Math.min(totalElapsedSeconds, SECONDS_IN_DAY);
 
-      activityLog.forEach(a => {
-        const start = Math.max(a.start, startOfDay);
-        const end = isToday ? Math.min(a.end || now, now) : Math.min(a.end, startOfDay + SECONDS_IN_DAY * 1000);
-        if (end > start) {
-          const duration = Math.floor((end - start) / 1000);
-          activityDurations[a.name] = (activityDurations[a.name] || 0) + duration;
+        // Do not reload data here to preserve currentActivity
+        const activityDurations = {};
+        let productiveSeconds = 0;
+
+        activityLog.forEach(a => {
+          const start = Math.max(a.start, startOfDay);
+          const end = isToday ? Math.min(a.end || now, now) : Math.min(a.end, startOfDay + SECONDS_IN_DAY * 1000);
+          if (end > start) {
+            const duration = Math.floor((end - start) / 1000);
+            activityDurations[a.name] = (activityDurations[a.name] || 0) + duration;
+            productiveSeconds += duration;
+          }
+        });
+
+        if (isToday && currentActivity) {
+          const liveDuration = Math.floor((now - currentActivity.start) / 1000);
+          activityDurations[currentActivity.name] = (activityDurations[currentActivity.name] || 0) + liveDuration;
+          productiveSeconds += liveDuration;
+        }
+
+        const unproductiveSeconds = Math.max(0, elapsed - productiveSeconds);
+        const remainingSeconds = isToday ? Math.max(0, SECONDS_IN_DAY - elapsed) : 0;
+
+        const baseLabels = Object.keys(activityDurations);
+        const baseData = Object.values(activityDurations);
+
+        baseLabels.forEach((name, idx) => {
+          const seconds = baseData[idx];
+          if (showPercent) {
+            const pct = ((seconds / SECONDS_IN_DAY) * 100).toFixed(1);
+            labels.push(`${name} (${pct}%)`);
+          } else {
+            labels.push(`${name} (${formatSeconds(seconds)})`);
+          }
+          dataArray.push(seconds);
+        });
+
+        if (unproductiveSeconds > 0) {
+          if (showPercent) {
+            const pctU = ((unproductiveSeconds / SECONDS_IN_DAY) * 100).toFixed(1);
+            labels.push(`Unaccounted (${pctU}%)`);
+          } else {
+            labels.push(`Unaccounted (${formatSeconds(unproductiveSeconds)})`);
+          }
+          dataArray.push(unproductiveSeconds);
+        }
+        if (remainingSeconds > 0) {
+          if (showPercent) {
+            const pctR = ((remainingSeconds / SECONDS_IN_DAY) * 100).toFixed(1);
+            labels.push(`Remaining (${pctR}%)`);
+          } else {
+            labels.push(`Remaining (${formatSeconds(remainingSeconds)})`);
+          }
+          dataArray.push(remainingSeconds);
+        }
+
+        backgroundColor = labels.map(label => {
+          if (label.startsWith('Unaccounted')) return '#777';
+          if (label.startsWith('Remaining')) return 'rgba(0, 0, 0, 0)';
+          const name = label.split(' (')[0];
+          const activityIndex = baseLabels.indexOf(name);
+          return genericColors[activityIndex % genericColors.length];
+        });
+
+        updateActivityStats(activityDurations, elapsed, baseLabels);
+      } else {
+        const year = viewedDate.getFullYear();
+        const month = viewedDate.getMonth();
+        const days = getDaysInMonth(year, month);
+        const totalMonthSeconds = days * SECONDS_IN_DAY;
+        const now = Date.now();
+        const monthStart = new Date(year, month, 1).getTime();
+        const isCurrentMonth = month === new Date().getMonth() && year === new Date().getFullYear();
+        const elapsedMonthSeconds = isCurrentMonth ? Math.floor((now - monthStart) / 1000) : totalMonthSeconds;
+        const activityDurations = {};
+        let productiveSeconds = 0;
+
+        for (let d = 1; d <= days; d++) {
+          const dateObj = new Date(year, month, d);
+          const keyLog = `activityLog-${formatDateKey(dateObj)}`;
+          const savedLog = JSON.parse(localStorage.getItem(keyLog) || '[]');
+          savedLog.forEach(a => {
+            const start = a.start;
+            let end;
+            if (formatDateKey(dateObj) === formatDateKey(new Date())) {
+              end = a.end || now;
+            } else {
+              end = a.end;
+            }
+            const dayStart = new Date(year, month, d).getTime();
+            const dayEnd = dayStart + SECONDS_IN_DAY * 1000;
+            const clampedStart = Math.max(start, dayStart);
+            const clampedEnd = Math.min(end, dayEnd);
+            if (clampedEnd > clampedStart) {
+              const duration = Math.floor((clampedEnd - clampedStart) / 1000);
+              activityDurations[a.name] = (activityDurations[a.name] || 0) + duration;
+              productiveSeconds += duration;
+            }
+          });
+        }
+
+        if (isCurrentMonth && currentActivity) {
+          const start = currentActivity.start;
+          const duration = Math.floor((now - start) / 1000);
+          activityDurations[currentActivity.name] = (activityDurations[currentActivity.name] || 0) + duration;
           productiveSeconds += duration;
         }
-      });
 
-      if (isToday && currentActivity) {
-        const liveDuration = Math.floor((now - currentActivity.start) / 1000);
-        activityDurations[currentActivity.name] = (activityDurations[currentActivity.name] || 0) + liveDuration;
-        productiveSeconds += liveDuration;
-      }
+        const unproductiveSeconds = Math.max(0, elapsedMonthSeconds - productiveSeconds);
+        const remainingSeconds = Math.max(0, totalMonthSeconds - elapsedMonthSeconds);
 
-      const unproductiveSeconds = Math.max(0, elapsed - productiveSeconds);
-      const remainingSeconds = isToday ? Math.max(0, SECONDS_IN_DAY - elapsed) : 0;
+        const baseLabels = Object.keys(activityDurations);
+        const baseData = Object.values(activityDurations);
 
-      const baseLabels = Object.keys(activityDurations);
-      const baseData = Object.values(activityDurations);
-      const labels = [];
-      const dataArray = [];
+        baseLabels.forEach((name, idx) => {
+          const seconds = baseData[idx];
+          if (showPercent) {
+            const pct = ((seconds / totalMonthSeconds) * 100).toFixed(1);
+            labels.push(`${name} (${pct}%)`);
+          } else {
+            labels.push(`${name} (${formatSeconds(seconds)})`);
+          }
+          dataArray.push(seconds);
+        });
 
-      baseLabels.forEach((name, idx) => {
-        const seconds = baseData[idx];
-        if (showPercent) {
-          const pct = ((seconds / SECONDS_IN_DAY) * 100).toFixed(1);
-          labels.push(`${name} (${pct}%)`);
-        } else {
-          labels.push(`${name} (${formatSeconds(seconds)})`);
+        if (unproductiveSeconds > 0) {
+          if (showPercent) {
+            const pctU = ((unproductiveSeconds / totalMonthSeconds) * 100).toFixed(1);
+            labels.push(`Unaccounted (${pctU}%)`);
+          } else {
+            labels.push(`Unaccounted (${formatSeconds(unproductiveSeconds)})`);
+          }
+          dataArray.push(unproductiveSeconds);
         }
-        dataArray.push(seconds);
-      });
-
-      if (unproductiveSeconds > 0) {
-        if (showPercent) {
-          const pctU = ((unproductiveSeconds / SECONDS_IN_DAY) * 100).toFixed(1);
-          labels.push(`Unproductive (${pctU}%)`);
-        } else {
-          labels.push(`Unproductive (${formatSeconds(unproductiveSeconds)})`);
+        if (remainingSeconds > 0) {
+          if (showPercent) {
+            const pctR = ((remainingSeconds / totalMonthSeconds) * 100).toFixed(1);
+            labels.push(`Remaining (${pctR}%)`);
+          } else {
+            labels.push(`Remaining (${formatSeconds(remainingSeconds)})`);
+          }
+          dataArray.push(remainingSeconds);
         }
-        dataArray.push(unproductiveSeconds);
-      }
-      if (remainingSeconds > 0) {
-        if (showPercent) {
-          const pctR = ((remainingSeconds / SECONDS_IN_DAY) * 100).toFixed(1);
-          labels.push(`Remaining (${pctR}%)`);
-        } else {
-          labels.push(`Remaining (${formatSeconds(remainingSeconds)})`);
-        }
-        dataArray.push(remainingSeconds);
-      }
 
-      const backgroundColor = labels.map(label => {
-        if (label.startsWith('Unproductive')) return '#777';
-        if (label.startsWith('Remaining')) return 'rgba(0, 0, 0, 0)';
-        const name = label.split(' (')[0];
-        const activityIndex = baseLabels.indexOf(name);
-        return genericColors[activityIndex % genericColors.length];
-      });
+        backgroundColor = labels.map(label => {
+          if (label.startsWith('Unaccounted')) return '#777';
+          if (label.startsWith('Remaining')) return 'rgba(0, 0, 0, 0)';
+          const name = label.split(' (')[0];
+          const activityIndex = baseLabels.indexOf(name);
+          return genericColors[activityIndex % genericColors.length];
+        });
+
+        updateActivityStats(activityDurations, isCurrentMonth ? elapsedMonthSeconds : totalMonthSeconds, baseLabels);
+      }
 
       chart.data.labels = labels;
       chart.data.datasets[0].data = dataArray;
       chart.data.datasets[0].backgroundColor = backgroundColor;
       chart.update();
-
-      updateActivityStats(activityDurations, elapsed, baseLabels);
     }
 
-    function updateActivityStats(durations, elapsed, baseLabels) {
+    function updateActivityStats(durations, periodSeconds, baseLabels) {
       const statsDiv = document.getElementById('activityStats');
-      let html = '<table><tr><th>Activity</th><th>Time</th><th>% of Elapsed</th><th>Delete</th></tr>';
-      const allLabels = Object.keys(durations);
-      allLabels.forEach((name, idx) => {
-        const seconds = durations[name];
-        const pct = elapsed > 0 ? ((seconds / elapsed) * 100).toFixed(1) : '0.0';
-        let color;
-        if (name === 'Unproductive') color = '#777';
-        else if (name === 'Remaining') color = 'transparent';
-        else {
-          const activityIndex = baseLabels.indexOf(name);
-          color = genericColors[activityIndex % genericColors.length];
-        }
-        html += `
-          <tr>
-            <td class="clickable" onclick="selectActivity('${encodeURIComponent(name)}')" style="color: ${color}">${name}</td>
-            <td>${formatSeconds(seconds)}</td>
-            <td>${pct}%</td>
-            <td><button class="delete-btn" onclick="deleteActivity('${encodeURIComponent(name)}')">&#x2716;</button></td>
-          </tr>`;
-      });
-      html += '</table>';
+      let html;
+      if (viewMode === 'daily') {
+        html = '<table><tr><th>Activity</th><th>Time</th><th>% of Period</th><th>Delete</th></tr>';
+        const allLabels = Object.keys(durations);
+        allLabels.forEach((name, idx) => {
+          const seconds = durations[name];
+          const pct = ((seconds / periodSeconds) * 100).toFixed(1);
+          let color;
+          if (name === 'Unaccounted') color = '#777';
+          else {
+            const activityIndex = baseLabels.indexOf(name);
+            color = genericColors[activityIndex % genericColors.length];
+          }
+          html += `
+            <tr>
+              <td class="clickable" onclick="selectActivity('${encodeURIComponent(name)}')" style="color: ${color}">${name}</td>
+              <td>${formatSeconds(seconds)}</td>
+              <td>${pct}%</td>
+              <td><button class="delete-btn" onclick="deleteActivity('${encodeURIComponent(name)}')">&#x2716;</button></td>
+            </tr>`;
+        });
+        html += '</table>';
+      } else {
+        html = '<table><tr><th>Activity</th><th>Time</th><th>% of Period</th></tr>';
+        const allLabels = Object.keys(durations);
+        allLabels.forEach((name, idx) => {
+          const seconds = durations[name];
+          const pct = ((seconds / periodSeconds) * 100).toFixed(1);
+          let color;
+          if (name === 'Unaccounted') color = '#777';
+          else {
+            const activityIndex = baseLabels.indexOf(name);
+            color = genericColors[activityIndex % genericColors.length];
+          }
+          html += `
+            <tr>
+              <td style="color: ${color}">${name}</td>
+              <td>${formatSeconds(seconds)}</td>
+              <td>${pct}%</td>
+            </tr>`;
+        });
+        html += '</table>';
+      }
       statsDiv.innerHTML = html;
     }
 
     setInterval(() => {
-      if (formatDateKey(new Date()) === formatDateKey(viewedDate)) {
+      if (viewMode === 'daily' && formatDateKey(new Date()) === formatDateKey(viewedDate)) {
         const now = Date.now();
         const startOfDay = getStartOfDayTimestamp(new Date());
         if (now >= startOfDay + SECONDS_IN_DAY * 1000) {
@@ -350,8 +502,12 @@
       const offsetMinutes = today.getTimezoneOffset();
       const localMid = new Date(today.getTime() - offsetMinutes * 60000);
       const todayStr = localMid.toISOString().split('T')[0];
+      const year = localMid.getFullYear();
+      const month = String(localMid.getMonth() + 1).padStart(2, '0');
+      const monthStr = `${year}-${month}`;
 
       datePicker.value = todayStr;
+      monthPicker.value = monthStr;
       viewedDate = parseDateString(todayStr);
       loadDateData(viewedDate);
       updateControls();
