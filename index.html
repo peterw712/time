@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Time Budget App (Firestore Sync)</title>
+  <title>Time Budget App (Firestore Sync - Real-Time)</title>
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <!-- Firebase SDKs -->
@@ -133,19 +133,17 @@
     // ================================================
     // 0) FIREBASE CONFIGURATION
     // ================================================
-    // Replace these values with your Firebase project's config:
     const firebaseConfig = {
-      apiKey: "AIzaSyCUkmGNiWZqtvbESF42gOc00CGTf2fJ3Ow",
-      authDomain: "time-budget-f0f13.firebaseapp.com",
-      projectId: "time-budget-f0f13",
-      // (Optional: storageBucket, messagingSenderId, appId, etc.)
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+      projectId: "YOUR_PROJECT_ID",
     };
     firebase.initializeApp(firebaseConfig);
     const auth = firebase.auth();
     const db = firebase.firestore();
 
     // ================================================
-    // 1) AUTHENTICATION LOGIC (Firebase-based)
+    // 1) AUTHENTICATION LOGIC
     // ================================================
     function loginUser() {
       const email = document.getElementById('loginEmail').value.trim();
@@ -155,9 +153,7 @@
         return;
       }
       auth.signInWithEmailAndPassword(email, password)
-        .catch(err => {
-          alert('Login failed: ' + err.message);
-        });
+        .catch(err => alert('Login failed: ' + err.message));
     }
 
     function signupUser() {
@@ -168,13 +164,12 @@
         return;
       }
       auth.createUserWithEmailAndPassword(email, password)
-        .catch(err => {
-          alert('Sign-up failed: ' + err.message);
-        });
+        .catch(err => alert('Sign-up failed: ' + err.message));
     }
 
     function logoutUser() {
       auth.signOut();
+      detachListeners();
     }
 
     function showApp() {
@@ -189,15 +184,12 @@
     }
 
     auth.onAuthStateChanged(user => {
-      if (user) {
-        showApp();
-      } else {
-        showLogin();
-      }
+      if (user) showApp();
+      else showLogin();
     });
 
     // ================================================
-    // 2) FIRESTORE HELPERS (per-user)
+    // 2) FIRESTORE HELPERS
     // ================================================
     function getUserBasePath() {
       const user = auth.currentUser;
@@ -206,11 +198,8 @@
     }
 
     async function saveToFirestore(docPath, dataObj) {
-      try {
-        await db.doc(`${getUserBasePath()}/${docPath}`).set(dataObj);
-      } catch (e) {
-        console.error("Firestore save error:", e);
-      }
+      try { await db.doc(`${getUserBasePath()}/${docPath}`).set(dataObj); }
+      catch (e) { console.error("Firestore save error:", e); }
     }
 
     async function loadFromFirestore(docPath) {
@@ -223,6 +212,21 @@
       }
     }
 
+    let unsubscribeLog = null;
+    let unsubscribeMeta = null;
+
+    function detachListeners() {
+      if (unsubscribeLog) { unsubscribeLog(); unsubscribeLog = null; }
+      if (unsubscribeMeta) { unsubscribeMeta(); unsubscribeMeta = null; }
+    }
+
+    function setupListenersForDate(dateObj) {
+      const dateKey = formatDateKey(dateObj);
+      const todayKey = formatDateKey(new Date());
+      if (dateKey !== todayKey) return;
+      setupListenersForCurrentDay();
+    }
+
     // ================================================
     // 3) TIME BUDGET APP LOGIC
     // ================================================
@@ -233,7 +237,7 @@
     ];
 
     let showPercent = false;
-    let viewMode = 'daily'; // 'daily' or 'monthly'
+    let viewMode = 'daily';
 
     function setMode(mode) {
       viewMode = mode;
@@ -243,6 +247,8 @@
         mode === 'monthly' ? 'block' : 'none';
       updateControls();
       updateChart();
+      if (mode === 'daily') setupListenersForDate(viewedDate);
+      else setupListenersForCurrentDay();
     }
 
     function toggleLabelMode() {
@@ -274,8 +280,8 @@
       return `${String(H).padStart(2, '0')}:${String(M).padStart(2, '0')}:${String(S).padStart(2, '0')}`;
     }
 
-    let activityLog = [];      // Array of {name, start(ms), end(ms)}
-    let currentActivity = null; // { name, start(ms) } or null
+    let activityLog = [];
+    let currentActivity = null;
     let viewedDate = new Date();
     let lastCheckedDayKey = formatDateKey(new Date());
 
@@ -284,10 +290,8 @@
     const activityNameInput = document.getElementById('activityName');
     const controlsDiv = document.getElementById('controls');
 
-    // Chart variable (initialized in initializeApp)
     let chart = null;
 
-    // Load daily data from Firestore: logs + currentActivity
     async function loadDateData(dateObj) {
       const dateKey = formatDateKey(dateObj);
       const logDoc = await loadFromFirestore(`logs/${dateKey}`);
@@ -303,7 +307,6 @@
       }
     }
 
-    // Save daily data to Firestore: logs + currentActivity
     async function saveDateData(dateObj) {
       const dateKey = formatDateKey(dateObj);
       await saveToFirestore(`logs/${dateKey}`, { log: activityLog });
@@ -313,7 +316,6 @@
         if (currentActivity) {
           await saveToFirestore(`meta/currentActivity`, { currentActivity });
         } else {
-          // Clear running activity
           await saveToFirestore(`meta/currentActivity`, { currentActivity: null });
         }
       }
@@ -323,7 +325,9 @@
       const sel = datePicker.value;
       if (!sel) return;
       viewedDate = parseDateString(sel);
+      detachListeners();
       await loadDateData(viewedDate);
+      setupListenersForDate(viewedDate);
       updateControls();
       updateChart();
     });
@@ -332,10 +336,12 @@
       const sel = monthPicker.value;
       if (!sel) return;
       viewedDate = parseMonthString(sel);
+      detachListeners();
       activityLog = [];
       currentActivity = null;
       updateControls();
       updateChart();
+      setupListenersForCurrentDay();
     });
 
     function updateControls() {
@@ -361,9 +367,7 @@
       const name = activityNameInput.value.trim();
       if (!name) return;
       if (currentActivity && currentActivity.name === name) return;
-      if (currentActivity) {
-        await stopCurrentActivity();
-      }
+      if (currentActivity) { await stopCurrentActivity(); }
       currentActivity = { name, start: Date.now() };
       activityNameInput.value = name;
       await saveDateData(viewedDate);
@@ -379,8 +383,7 @@
     }
 
     function selectActivity(encodedName) {
-      const name = decodeURIComponent(encodedName);
-      activityNameInput.value = name;
+      activityNameInput.value = decodeURIComponent(encodedName);
     }
 
     async function deleteActivity(encodedName) {
@@ -395,7 +398,6 @@
       return new Date(year, month + 1, 0).getDate();
     }
 
-    // Build & update the chart (daily or monthly)
     async function updateChart() {
       const labels = [];
       const dataArray = [];
@@ -411,7 +413,6 @@
           : SECONDS_IN_DAY;
         const elapsed = Math.min(totalElapsedSeconds, SECONDS_IN_DAY);
 
-        // Accumulate durations
         const activityDurations = {};
         let productiveSeconds = 0;
 
@@ -485,7 +486,6 @@
         updateActivityStats(activityDurations, elapsed, baseLabels);
 
       } else {
-        // Monthly mode: sum all days in the selected month
         const year = viewedDate.getFullYear();
         const month = viewedDate.getMonth();
         const days = getDaysInMonth(year, month);
@@ -498,24 +498,33 @@
           ? Math.floor((now - monthStart) / 1000)
           : totalMonthSeconds;
 
+        const dateKeys = [];
+        for (let d = 1; d <= days; d++) {
+          const dateObj = new Date(year, month, d);
+          dateKeys.push(formatDateKey(dateObj));
+        }
+        const promises = dateKeys.map(key => loadFromFirestore(`logs/${key}`));
+        const docs = await Promise.all(promises);
+
         const activityDurations = {};
         let productiveSeconds = 0;
 
-        // Fetch each day's document
-        for (let d = 1; d <= days; d++) {
-          const dateObj = new Date(year, month, d);
-          const dateKey = formatDateKey(dateObj);
-          const logDoc = await loadFromFirestore(`logs/${dateKey}`);
-          const dayLog = logDoc?.log || [];
+        docs.forEach((docData, idx) => {
+          const dayLog = docData?.log || [];
+          const dateKey = dateKeys[idx];
+          const dateParts = dateKey.split('-');
+          const yearD = Number(dateParts[0]);
+          const monthD = Number(dateParts[1]) - 1;
+          const dayD = Number(dateParts[2]);
+          const dayStart = new Date(yearD, monthD, dayD).getTime();
+          const dayEnd = dayStart + SECONDS_IN_DAY * 1000;
 
           dayLog.forEach(a => {
             const start = a.start;
             const end =
-              formatDateKey(dateObj) === formatDateKey(new Date())
+              dateKey === formatDateKey(new Date())
                 ? a.end || now
                 : a.end;
-            const dayStart = new Date(year, month, d).getTime();
-            const dayEnd = dayStart + SECONDS_IN_DAY * 1000;
             const clampedStart = Math.max(start, dayStart);
             const clampedEnd = Math.min(end, dayEnd);
             if (clampedEnd > clampedStart) {
@@ -524,7 +533,7 @@
               productiveSeconds += dur;
             }
           });
-        }
+        });
 
         if (isCurrentMonth && currentActivity) {
           const liveDur = Math.floor((now - currentActivity.start) / 1000);
@@ -647,42 +656,55 @@
     }
 
     // ================================================
-    // 4) MIDNIGHT ROLLOVER (carry forward running activity)
+    // 4) REAL-TIME LISTENERS for current day
+    // ================================================
+    function setupListenersForCurrentDay() {
+      const todayKey = formatDateKey(new Date());
+      const logRef = db.doc(`${getUserBasePath()}/logs/${todayKey}`);
+      unsubscribeLog = logRef.onSnapshot(doc => {
+        const data = doc.data();
+        activityLog = data?.log || [];
+        updateChart();
+      });
+      const metaRef = db.doc(`${getUserBasePath()}/meta/currentActivity`);
+      unsubscribeMeta = metaRef.onSnapshot(doc => {
+        const data = doc.data();
+        currentActivity = data?.currentActivity || null;
+        if (currentActivity) activityNameInput.value = currentActivity.name;
+        updateChart();
+      });
+    }
+
+    // ================================================
+    // 5) MIDNIGHT ROLLOVER (carry forward running activity)
     // ================================================
     setInterval(async () => {
       const now = Date.now();
       const today = new Date();
       const todayKey = formatDateKey(today);
-      const midnightTimestamp = getStartOfDayTimestamp(today); // 00:00 today
+      const midnightTimestamp = getStartOfDayTimestamp(today);
 
       if (todayKey !== lastCheckedDayKey && now >= midnightTimestamp) {
-        // load running activity from Firestore
         const metaDoc = await loadFromFirestore(`meta/currentActivity`);
         const savedCurrent = metaDoc?.currentActivity || null;
 
         if (savedCurrent) {
-          // Push the running activity up to midnight on yesterday’s doc
           const yDay = new Date(midnightTimestamp - SECONDS_IN_DAY * 1000);
           const prevKey = formatDateKey(yDay);
           const prevLogDoc = await loadFromFirestore(`logs/${prevKey}`);
           const prevLog = prevLogDoc?.log || [];
-          prevLog.push({
-            name: savedCurrent.name,
-            start: savedCurrent.start,
-            end: midnightTimestamp
-          });
+          prevLog.push({ name: savedCurrent.name, start: savedCurrent.start, end: midnightTimestamp });
           await saveToFirestore(`logs/${prevKey}`, { log: prevLog });
 
-          // Now start a new running activity at midnight
           currentActivity = { name: savedCurrent.name, start: midnightTimestamp };
           await saveToFirestore(`meta/currentActivity`, { currentActivity });
         }
 
-        // Switch to new date
         viewedDate = new Date(midnightTimestamp);
-        const todayISO = new Date(midnightTimestamp).toISOString().split('T')[0];
-        datePicker.value = todayISO;
+        datePicker.value = new Date(midnightTimestamp).toISOString().split('T')[0];
+        detachListeners();
         await loadDateData(viewedDate);
+        setupListenersForCurrentDay();
         updateControls();
         updateChart();
 
@@ -691,10 +713,9 @@
     }, 60 * 1000);
 
     // ================================================
-    // 5) INITIALIZE ON PAGE LOAD
+    // 6) INITIALIZE ON PAGE LOAD
     // ================================================
     async function initializeApp() {
-      // Create the chart
       const ctx = document.getElementById('timeChart').getContext('2d');
       chart = new Chart(ctx, {
         type: 'doughnut',
@@ -709,7 +730,6 @@
         }
       });
 
-      // Set date/month pickers to today
       const today = new Date();
       const offsetMinutes = today.getTimezoneOffset();
       const localMid = new Date(today.getTime() - offsetMinutes * 60000);
@@ -722,12 +742,11 @@
       monthPicker.value = monthStr;
       viewedDate = parseDateString(todayStr);
 
-      // Load data & render
       await loadDateData(viewedDate);
+      setupListenersForCurrentDay();
       updateControls();
       updateChart();
 
-      // Refresh every second for real-time updates
       setInterval(updateChart, 1000);
     }
   </script>
