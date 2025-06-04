@@ -1,3 +1,4 @@
+```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -169,7 +170,7 @@
 
     function logoutUser() {
       auth.signOut();
-      detachListeners();
+      detachDailyListeners();
     }
 
     function showApp() {
@@ -212,23 +213,50 @@
       }
     }
 
+    // ================================================
+    // 3) FIRESTORE LISTENER “UNSUBSCRIBES”
+    // ================================================
     let unsubscribeLog = null;
     let unsubscribeMeta = null;
 
-    function detachListeners() {
-      if (unsubscribeLog) { unsubscribeLog(); unsubscribeLog = null; }
-      if (unsubscribeMeta) { unsubscribeMeta(); unsubscribeMeta = null; }
+    function detachDailyListeners() {
+      if (unsubscribeLog) {
+        unsubscribeLog();
+        unsubscribeLog = null;
+      }
+      if (unsubscribeMeta) {
+        unsubscribeMeta();
+        unsubscribeMeta = null;
+      }
     }
 
-    function setupListenersForDate(dateObj) {
-      const dateKey = formatDateKey(dateObj);
-      const todayKey = formatDateKey(new Date());
-      if (dateKey !== todayKey) return;
-      setupListenersForCurrentDay();
+    function attachDailyListeners(dateKey) {
+      const basePath = getUserBasePath();
+      const logDocRef = db.doc(`${basePath}/logs/${dateKey}`);
+      const metaDocRef = db.doc(`${basePath}/meta/currentActivity`);
+
+      // 1) Listen for changes to today's log array:
+      unsubscribeLog = logDocRef.onSnapshot(snapshot => {
+        const data = snapshot.exists ? snapshot.data().log : [];
+        activityLog = Array.isArray(data) ? data : [];
+        updateChart();
+      });
+
+      // 2) Listen for changes to currentActivity:
+      unsubscribeMeta = metaDocRef.onSnapshot(snapshot => {
+        const doc = snapshot.exists ? snapshot.data().currentActivity : null;
+        currentActivity = doc || null;
+        if (currentActivity) {
+          activityNameInput.value = currentActivity.name;
+        } else {
+          activityNameInput.value = '';
+        }
+        updateChart();
+      });
     }
 
     // ================================================
-    // 3) TIME BUDGET APP LOGIC
+    // 4) TIME BUDGET APP LOGIC
     // ================================================
     const SECONDS_IN_DAY = 86400;
     const genericColors = [
@@ -238,18 +266,6 @@
 
     let showPercent = false;
     let viewMode = 'daily';
-
-    function setMode(mode) {
-      viewMode = mode;
-      document.getElementById('dailyControls').style.display =
-        mode === 'daily' ? 'block' : 'none';
-      document.getElementById('monthlyControls').style.display =
-        mode === 'monthly' ? 'block' : 'none';
-      updateControls();
-      updateChart();
-      if (mode === 'daily') setupListenersForDate(viewedDate);
-      else setupListenersForCurrentDay();
-    }
 
     function toggleLabelMode() {
       showPercent = document.getElementById('toggleMode').checked;
@@ -292,21 +308,36 @@
 
     let chart = null;
 
+    // ================================================
+    // 4a) loadDateData() (now detaches/attaches listeners)
+    // ================================================
     async function loadDateData(dateObj) {
       const dateKey = formatDateKey(dateObj);
+
+      // Detach any old listeners (e.g., if we were listening to yesterday)
+      detachDailyListeners();
+
+      // Load the stored log once (so we can render immediately)
       const logDoc = await loadFromFirestore(`logs/${dateKey}`);
       activityLog = logDoc?.log || [];
 
       const todayKey = formatDateKey(new Date());
       if (viewMode === 'daily' && dateKey === todayKey) {
+        // If we are viewing “today” in Daily mode, load currentActivity & attach listeners
         const metaDoc = await loadFromFirestore(`meta/currentActivity`);
         currentActivity = metaDoc?.currentActivity || null;
         activityNameInput.value = currentActivity?.name || '';
+        attachDailyListeners(dateKey);
       } else {
+        // If not viewing “today,” just clear currentActivity and leave listeners detached:
         currentActivity = null;
+        activityNameInput.value = '';
       }
     }
 
+    // ================================================
+    // 4b) saveDateData()
+    // ================================================
     async function saveDateData(dateObj) {
       const dateKey = formatDateKey(dateObj);
       await saveToFirestore(`logs/${dateKey}`, { log: activityLog });
@@ -321,13 +352,30 @@
       }
     }
 
+    // ================================================
+    // 4c) setMode() should re‐load data & reattach listeners
+    // ================================================
+    async function setMode(mode) {
+      viewMode = mode;
+      document.getElementById('dailyControls').style.display =
+        mode === 'daily' ? 'block' : 'none';
+      document.getElementById('monthlyControls').style.display =
+        mode === 'monthly' ? 'block' : 'none';
+
+      // Re‐load data for the current viewedDate (which will detach/attach as needed)
+      await loadDateData(viewedDate);
+      updateControls();
+      updateChart();
+    }
+
+    // ================================================
+    // 5) Date & Month Pickers
+    // ================================================
     datePicker.addEventListener('change', async () => {
       const sel = datePicker.value;
       if (!sel) return;
       viewedDate = parseDateString(sel);
-      detachListeners();
       await loadDateData(viewedDate);
-      setupListenersForDate(viewedDate);
       updateControls();
       updateChart();
     });
@@ -336,14 +384,16 @@
       const sel = monthPicker.value;
       if (!sel) return;
       viewedDate = parseMonthString(sel);
-      detachListeners();
+      detachDailyListeners();
       activityLog = [];
       currentActivity = null;
       updateControls();
       updateChart();
-      setupListenersForCurrentDay();
     });
 
+    // ================================================
+    // 6) updateControls()
+    // ================================================
     function updateControls() {
       const todayKey = formatDateKey(new Date());
       if (viewMode === 'daily' && formatDateKey(viewedDate) === todayKey) {
@@ -353,6 +403,9 @@
       }
     }
 
+    // ================================================
+    // 7) start/stop/delete Activity
+    // ================================================
     async function stopCurrentActivity(atTimestamp = Date.now()) {
       if (!currentActivity) return;
       currentActivity.end = atTimestamp;
@@ -394,10 +447,9 @@
       updateChart();
     }
 
-    function getDaysInMonth(year, month) {
-      return new Date(year, month + 1, 0).getDate();
-    }
-
+    // ================================================
+    // 8) updateChart()
+    // ================================================
     async function updateChart() {
       const labels = [];
       const dataArray = [];
@@ -488,7 +540,7 @@
       } else {
         const year = viewedDate.getFullYear();
         const month = viewedDate.getMonth();
-        const days = getDaysInMonth(year, month);
+        const days = new Date(year, month + 1, 0).getDate();
         const totalMonthSeconds = days * SECONDS_IN_DAY;
         const now = Date.now();
         const monthStart = new Date(year, month, 1).getTime();
@@ -512,11 +564,8 @@
         docs.forEach((docData, idx) => {
           const dayLog = docData?.log || [];
           const dateKey = dateKeys[idx];
-          const dateParts = dateKey.split('-');
-          const yearD = Number(dateParts[0]);
-          const monthD = Number(dateParts[1]) - 1;
-          const dayD = Number(dateParts[2]);
-          const dayStart = new Date(yearD, monthD, dayD).getTime();
+          const [yearD, monthD, dayD] = dateKey.split('-').map(Number);
+          const dayStart = new Date(yearD, monthD - 1, dayD).getTime();
           const dayEnd = dayStart + SECONDS_IN_DAY * 1000;
 
           dayLog.forEach(a => {
@@ -656,27 +705,7 @@
     }
 
     // ================================================
-    // 4) REAL-TIME LISTENERS for current day
-    // ================================================
-    function setupListenersForCurrentDay() {
-      const todayKey = formatDateKey(new Date());
-      const logRef = db.doc(`${getUserBasePath()}/logs/${todayKey}`);
-      unsubscribeLog = logRef.onSnapshot(doc => {
-        const data = doc.data();
-        activityLog = data?.log || [];
-        updateChart();
-      });
-      const metaRef = db.doc(`${getUserBasePath()}/meta/currentActivity`);
-      unsubscribeMeta = metaRef.onSnapshot(doc => {
-        const data = doc.data();
-        currentActivity = data?.currentActivity || null;
-        if (currentActivity) activityNameInput.value = currentActivity.name;
-        updateChart();
-      });
-    }
-
-    // ================================================
-    // 5) MIDNIGHT ROLLOVER (carry forward running activity)
+    // 9) MIDNIGHT ROLLOVER (carry forward running activity)
     // ================================================
     setInterval(async () => {
       const now = Date.now();
@@ -702,9 +731,7 @@
 
         viewedDate = new Date(midnightTimestamp);
         datePicker.value = new Date(midnightTimestamp).toISOString().split('T')[0];
-        detachListeners();
         await loadDateData(viewedDate);
-        setupListenersForCurrentDay();
         updateControls();
         updateChart();
 
@@ -713,7 +740,7 @@
     }, 60 * 1000);
 
     // ================================================
-    // 6) INITIALIZE ON PAGE LOAD
+    // 10) INITIALIZE ON PAGE LOAD
     // ================================================
     async function initializeApp() {
       const ctx = document.getElementById('timeChart').getContext('2d');
@@ -743,7 +770,6 @@
       viewedDate = parseDateString(todayStr);
 
       await loadDateData(viewedDate);
-      setupListenersForCurrentDay();
       updateControls();
       updateChart();
 
