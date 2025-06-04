@@ -272,7 +272,7 @@
     let showPercent = false;
     let viewMode = 'daily';
 
-// ← NEW: skipNextUpdate will suppress exactly one updateChart() call
+    // ← skipNextUpdate will suppress exactly one updateChart() call
     let skipNextUpdate = false;
 
     function toggleLabelMode() {
@@ -441,7 +441,7 @@
       if (viewMode !== 'daily') return;
       if (!currentActivity) return;
 
-      // ← NEW: suppress exactly one updateChart() so you don't see a brief increment
+      // suppress exactly one updateChart() so you don't see a brief increment
       skipNextUpdate = true;
 
       await stopCurrentActivity();
@@ -462,10 +462,10 @@
     }
 
     // ================================================
-    // 8) updateChart() (patched to respect skipNextUpdate)
+    // 8) updateChart() (patched to respect skipNextUpdate and include live in monthly)
     // ================================================
     async function updateChart() {
-    // ← NEW: if skipNextUpdate is true, clear it and abort this render
+      // if skipNextUpdate is true, clear it and abort this render
       if (skipNextUpdate) {
         skipNextUpdate = false;
         return;
@@ -579,7 +579,7 @@
 
       } else {
         // ===============================
-        // MONTHLY MODE (unchanged)
+        // MONTHLY MODE (now includes live currentActivity)
         // ===============================
         const year = viewedDate.getFullYear();
         const month = viewedDate.getMonth();
@@ -608,6 +608,7 @@
         const activityDurations = {};
         let productiveSeconds = 0;
 
+        // 1) Tally up all _finished_ entries (those with a non-null a.end)
         docs.forEach((docData, idx) => {
           const dayLog = docData?.log || [];
           const dateKey = dateKeys[idx];
@@ -616,14 +617,13 @@
           const dayEnd   = dayStart + SECONDS_IN_DAY * 1000;
 
           dayLog.forEach(a => {
-            if (a.end == null) {
-              return;
-            }
+            if (a.end == null) return;   // skip any interval that wasn’t “stopped”
             const startTs = a.start;
-            const endTs =
-              (dateKey === formatDateKey(new Date()))
-                ? (a.end || now)
-                : a.end;
+            const endTs   = (dateKey === formatDateKey(new Date()))
+                            ? (a.end || now)
+                            : a.end;
+
+            // clamp to the 00:00–23:59:59 of that day
             const clampedStart = Math.max(startTs, dayStart);
             const clampedEnd   = Math.min(endTs, dayEnd);
             if (clampedEnd > clampedStart) {
@@ -634,16 +634,22 @@
           });
         });
 
+        // 2) Now, if there’s a currentActivity that’s still going _right now_,
+        //    add its “live” portion _only if_ we’re looking at this month:
         if (isCurrentMonth && currentActivity) {
-          const liveDur = Math.floor((now - currentActivity.start) / 1000);
+          // clamp the live portion to not start before the month began:
+          const liveStart = Math.max(currentActivity.start, monthStart);
+          const liveDur   = Math.floor((now - liveStart) / 1000);
           activityDurations[currentActivity.name] =
             (activityDurations[currentActivity.name] || 0) + liveDur;
           productiveSeconds += liveDur;
         }
 
+        // 3) Calculate unaccounted/remaining seconds for this month
         const unproductiveSeconds = Math.max(0, elapsedMonthSeconds - productiveSeconds);
-        const remainingSeconds = Math.max(0, totalMonthSeconds - elapsedMonthSeconds);
+        const remainingSeconds    = Math.max(0, totalMonthSeconds - elapsedMonthSeconds);
 
+        // 4) Build labels & data exactly as before
         const baseLabels = Object.keys(activityDurations);
         const baseData   = Object.values(activityDurations);
 
@@ -689,11 +695,12 @@
           }
         });
 
+        // 5) Finally, update the activity‐stats table for monthly
         updateActivityStats(
           activityDurations,
-          elapsedMonthSeconds,   // periodSeconds for monthly
+          elapsedMonthSeconds,   // “seconds elapsed so far this month”
           baseLabels,
-          totalMonthSeconds      // totalPeriodSeconds for monthly
+          totalMonthSeconds      // “seconds in the entire month”
         );
       }
 
