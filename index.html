@@ -272,6 +272,9 @@
     let showPercent = false;
     let viewMode = 'daily';
 
+// ← NEW: skipNextUpdate will suppress exactly one updateChart() call
+    let skipNextUpdate = false;
+
     function toggleLabelMode() {
       showPercent = document.getElementById('toggleMode').checked;
       updateChart();
@@ -409,7 +412,7 @@
     }
 
     // ================================================
-    // 7) start/stop/delete Activity
+    // 7) start/stop/delete Activity (patched to set skipNextUpdate)
     // ================================================
     async function stopCurrentActivity(atTimestamp = Date.now()) {
       if (!currentActivity) return;
@@ -437,6 +440,10 @@
     async function stopActivity() {
       if (viewMode !== 'daily') return;
       if (!currentActivity) return;
+
+      // ← NEW: suppress exactly one updateChart() so you don't see a brief increment
+      skipNextUpdate = true;
+
       await stopCurrentActivity();
       activityNameInput.value = '';
       updateChart();
@@ -455,9 +462,15 @@
     }
 
     // ================================================
-    // 8) updateChart()
+    // 8) updateChart() (patched to respect skipNextUpdate)
     // ================================================
     async function updateChart() {
+    // ← NEW: if skipNextUpdate is true, clear it and abort this render
+      if (skipNextUpdate) {
+        skipNextUpdate = false;
+        return;
+      }
+
       const labels = [];
       const dataArray = [];
       const backgroundColor = [];
@@ -478,18 +491,13 @@
         const activityDurations = {};
         let productiveSeconds = 0;
 
-        // --- CHANGE: skip any log‐entry without an explicit “end” field ---
+        // Skip any log‐entry without an explicit “end” field:
         for (let a of activityLog) {
-          // If there is no a.end (or it’s null/undefined), skip this entry entirely:
-          if (a.end == null) {
-            continue;
-          }
-
+          if (a.end == null) continue;
           const startTs = Math.max(a.start, startOfDay);
           const endTs = isToday
             ? Math.min(a.end, now)
             : Math.min(a.end, startOfDay + SECONDS_IN_DAY * 1000);
-
           if (endTs > startTs) {
             const durSec = Math.floor((endTs - startTs) / 1000);
             activityDurations[a.name] = (activityDurations[a.name] || 0) + durSec;
@@ -499,7 +507,6 @@
 
         // 3) If there’s a currentActivity still running, only count from midnight onward
         if (isToday && currentActivity) {
-          // clamp the live portion to startOfDay (so we don’t double‐count anything before midnight)
           const clampedStart = Math.max(currentActivity.start, startOfDay);
           const liveDur = Math.floor((now - clampedStart) / 1000);
           activityDurations[currentActivity.name] =
@@ -609,7 +616,6 @@
           const dayEnd   = dayStart + SECONDS_IN_DAY * 1000;
 
           dayLog.forEach(a => {
-            // Skip if no end timestamp:
             if (a.end == null) {
               return;
             }
@@ -700,8 +706,7 @@
     }
 
     // ================================================
-    // 8b) updateActivityStats()
-    //     → Now accepts a 4th argument: totalPeriodSeconds
+    // 8b) updateActivityStats() (unchanged)
     // ================================================
     function updateActivityStats(durations, periodSeconds, baseLabels, totalPeriodSeconds) {
       const statsDiv = document.getElementById('activityStats');
@@ -778,7 +783,7 @@
     }
 
     // ================================================
-    // 9) MIDNIGHT ROLLOVER (carry forward running activity)
+    // 9) MIDNIGHT ROLLOVER (unchanged)
     // ================================================
     setInterval(async () => {
       const now = Date.now();
