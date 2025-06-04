@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Time Budget App (Firestore Sync - Real-Time)</title>
+  <title>Time Budget App (Firestore Sync – Real-Time)</title>
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <!-- Firebase SDKs -->
@@ -231,27 +231,33 @@
 
     function attachDailyListeners(dateKey) {
       const basePath = getUserBasePath();
-      const logDocRef = db.doc(`${basePath}/logs/${dateKey}`);
+      const logDocRef  = db.doc(`${basePath}/logs/${dateKey}`);
       const metaDocRef = db.doc(`${basePath}/meta/currentActivity`);
 
       // 1) Listen for changes to today's log array:
-      unsubscribeLog = logDocRef.onSnapshot(snapshot => {
-        const data = snapshot.exists ? snapshot.data().log : [];
-        activityLog = Array.isArray(data) ? data : [];
-        updateChart();
-      });
+      unsubscribeLog = logDocRef.onSnapshot(
+        snapshot => {
+          const data = snapshot.exists ? snapshot.data().log : [];
+          activityLog = Array.isArray(data) ? data : [];
+          updateChart();
+        },
+        err => console.error("Log listener error:", err)
+      );
 
       // 2) Listen for changes to currentActivity:
-      unsubscribeMeta = metaDocRef.onSnapshot(snapshot => {
-        const doc = snapshot.exists ? snapshot.data().currentActivity : null;
-        currentActivity = doc || null;
-        if (currentActivity) {
-          activityNameInput.value = currentActivity.name;
-        } else {
-          activityNameInput.value = '';
-        }
-        updateChart();
-      });
+      unsubscribeMeta = metaDocRef.onSnapshot(
+        snapshot => {
+          const doc = snapshot.exists ? snapshot.data().currentActivity : null;
+          currentActivity = doc || null;
+          if (currentActivity) {
+            activityNameInput.value = currentActivity.name;
+          } else {
+            activityNameInput.value = '';
+          }
+          updateChart();
+        },
+        err => console.error("Meta listener error:", err)
+      );
     }
 
     // ================================================
@@ -300,35 +306,36 @@
     let viewedDate = new Date();
     let lastCheckedDayKey = formatDateKey(new Date());
 
-    const datePicker = document.getElementById('datePicker');
-    const monthPicker = document.getElementById('monthPicker');
+    const datePicker      = document.getElementById('datePicker');
+    const monthPicker     = document.getElementById('monthPicker');
     const activityNameInput = document.getElementById('activityName');
-    const controlsDiv = document.getElementById('controls');
+    const controlsDiv     = document.getElementById('controls');
 
     let chart = null;
 
     // ================================================
-    // 4a) loadDateData() (now detaches/attaches listeners)
+    // 4a) loadDateData() (detaches/attaches listeners)
     // ================================================
     async function loadDateData(dateObj) {
       const dateKey = formatDateKey(dateObj);
 
-      // Detach any old listeners (e.g., if we were listening to yesterday)
+      // 1) Detach any previous listeners (e.g. from yesterday)
       detachDailyListeners();
 
-      // Load the stored log once (so we can render immediately)
+      // 2) Load that date’s log once, so we have something to render immediately:
       const logDoc = await loadFromFirestore(`logs/${dateKey}`);
       activityLog = logDoc?.log || [];
 
+      // 3) If we’re in “daily mode” AND dateKey is truly “today,”
+      //    fetch currentActivity once and then attach real-time listeners:
       const todayKey = formatDateKey(new Date());
       if (viewMode === 'daily' && dateKey === todayKey) {
-        // If we are viewing “today” in Daily mode, load currentActivity & attach listeners
         const metaDoc = await loadFromFirestore(`meta/currentActivity`);
         currentActivity = metaDoc?.currentActivity || null;
         activityNameInput.value = currentActivity?.name || '';
         attachDailyListeners(dateKey);
       } else {
-        // If not viewing “today,” just clear currentActivity and leave listeners detached:
+        // If not “today,” clear currentActivity and leave listeners off
         currentActivity = null;
         activityNameInput.value = '';
       }
@@ -341,6 +348,7 @@
       const dateKey = formatDateKey(dateObj);
       await saveToFirestore(`logs/${dateKey}`, { log: activityLog });
 
+      // If we are in daily mode & dateObj == today, update meta/currentActivity too:
       const todayKey = formatDateKey(new Date());
       if (viewMode === 'daily' && dateKey === todayKey) {
         if (currentActivity) {
@@ -352,16 +360,14 @@
     }
 
     // ================================================
-    // 4c) setMode() should re‐load data & reattach listeners
+    // 4c) setMode() (re-load data & attach/detach listeners)
     // ================================================
     async function setMode(mode) {
       viewMode = mode;
-      document.getElementById('dailyControls').style.display =
-        mode === 'daily' ? 'block' : 'none';
-      document.getElementById('monthlyControls').style.display =
-        mode === 'monthly' ? 'block' : 'none';
+      document.getElementById('dailyControls').style.display   = (mode === 'daily')   ? 'block' : 'none';
+      document.getElementById('monthlyControls').style.display = (mode === 'monthly') ? 'block' : 'none';
 
-      // Re‐load data for the current viewedDate (which will detach/attach as needed)
+      // Re-load whatever date is currently selected:
       await loadDateData(viewedDate);
       updateControls();
       updateChart();
@@ -391,7 +397,7 @@
     });
 
     // ================================================
-    // 6) updateControls()
+    // 6) updateControls() – show/hide Start/Stop based on “today in daily mode”
     // ================================================
     function updateControls() {
       const todayKey = formatDateKey(new Date());
@@ -419,7 +425,9 @@
       const name = activityNameInput.value.trim();
       if (!name) return;
       if (currentActivity && currentActivity.name === name) return;
-      if (currentActivity) { await stopCurrentActivity(); }
+      if (currentActivity) {
+        await stopCurrentActivity();
+      }
       currentActivity = { name, start: Date.now() };
       activityNameInput.value = name;
       await saveDateData(viewedDate);
@@ -458,51 +466,68 @@
         const now = Date.now();
         const startOfDay = getStartOfDayTimestamp(viewedDate);
         const todayKey = formatDateKey(new Date());
-        const isToday = formatDateKey(viewedDate) === todayKey;
+        const isToday = (formatDateKey(viewedDate) === todayKey);
+
+        // 1) Compute “elapsed so far” (in seconds)
         const totalElapsedSeconds = isToday
           ? Math.floor((now - startOfDay) / 1000)
           : SECONDS_IN_DAY;
-        const elapsed = Math.min(totalElapsedSeconds, SECONDS_IN_DAY);
+        const elapsedSeconds = Math.min(totalElapsedSeconds, SECONDS_IN_DAY);
 
+        // 2) Build a map: activityName → totalSeconds so far
         const activityDurations = {};
         let productiveSeconds = 0;
 
+        // --- CHANGE: skip any log‐entry without an explicit “end” field ---
         for (let a of activityLog) {
-          const start = Math.max(a.start, startOfDay);
-          const end = isToday
-            ? Math.min(a.end || now, now)
+          // If there is no a.end (or it’s null/undefined), skip this entry entirely:
+          if (a.end == null) {
+            continue;
+          }
+
+          const startTs = Math.max(a.start, startOfDay);
+          const endTs = isToday
+            ? Math.min(a.end, now)
             : Math.min(a.end, startOfDay + SECONDS_IN_DAY * 1000);
-          if (end > start) {
-            const dur = Math.floor((end - start) / 1000);
-            activityDurations[a.name] = (activityDurations[a.name] || 0) + dur;
-            productiveSeconds += dur;
+
+          if (endTs > startTs) {
+            const durSec = Math.floor((endTs - startTs) / 1000);
+            activityDurations[a.name] = (activityDurations[a.name] || 0) + durSec;
+            productiveSeconds += durSec;
           }
         }
 
+        // 3) If there’s a currentActivity still running, only count from midnight onward
         if (isToday && currentActivity) {
-          const liveDur = Math.floor((now - currentActivity.start) / 1000);
+          // clamp the live portion to startOfDay (so we don’t double‐count anything before midnight)
+          const clampedStart = Math.max(currentActivity.start, startOfDay);
+          const liveDur = Math.floor((now - clampedStart) / 1000);
           activityDurations[currentActivity.name] =
             (activityDurations[currentActivity.name] || 0) + liveDur;
           productiveSeconds += liveDur;
         }
 
-        const unproductiveSeconds = Math.max(0, elapsed - productiveSeconds);
-        const remainingSeconds = isToday ? Math.max(0, SECONDS_IN_DAY - elapsed) : 0;
+        // 4) Calculate “unaccounted” and “remaining”
+        const unproductiveSeconds = Math.max(0, elapsedSeconds - productiveSeconds);
+        const remainingSeconds = isToday ? Math.max(0, SECONDS_IN_DAY - elapsedSeconds) : 0;
 
+        // 5) Build doughnut slices
         const baseLabels = Object.keys(activityDurations);
-        const baseData = Object.values(activityDurations);
+        const baseDurations = Object.values(activityDurations);
 
+        // – each real activity
         baseLabels.forEach((name, idx) => {
-          const secs = baseData[idx];
+          const secs = baseDurations[idx];
           if (showPercent) {
-            const pct = ((secs / SECONDS_IN_DAY) * 100).toFixed(1);
-            labels.push(`${name} (${pct}%)`);
+            const pctOfDay = ((secs / SECONDS_IN_DAY) * 100).toFixed(1);
+            labels.push(`${name} (${pctOfDay}%)`);
           } else {
             labels.push(`${name} (${formatSeconds(secs)})`);
           }
           dataArray.push(secs);
         });
 
+        // – unaccounted slice
         if (unproductiveSeconds > 0) {
           if (showPercent) {
             const pctU = ((unproductiveSeconds / SECONDS_IN_DAY) * 100).toFixed(1);
@@ -512,6 +537,8 @@
           }
           dataArray.push(unproductiveSeconds);
         }
+
+        // – remaining slice (only if isToday)
         if (remainingSeconds > 0) {
           if (showPercent) {
             const pctR = ((remainingSeconds / SECONDS_IN_DAY) * 100).toFixed(1);
@@ -522,6 +549,7 @@
           dataArray.push(remainingSeconds);
         }
 
+        // – pick colors
         labels.forEach(label => {
           if (label.startsWith('Unaccounted')) {
             backgroundColor.push('#777');
@@ -534,26 +562,39 @@
           }
         });
 
-        updateActivityStats(activityDurations, elapsed, baseLabels);
+        // 6) Update the table:
+        updateActivityStats(
+          activityDurations,
+          elapsedSeconds,       // “periodSeconds” (time elapsed so far today)
+          baseLabels,
+          SECONDS_IN_DAY        // “totalPeriodSeconds” (24h)
+        );
 
       } else {
+        // ===============================
+        // MONTHLY MODE (unchanged)
+        // ===============================
         const year = viewedDate.getFullYear();
         const month = viewedDate.getMonth();
-        const days = new Date(year, month + 1, 0).getDate();
-        const totalMonthSeconds = days * SECONDS_IN_DAY;
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        const totalMonthSeconds = daysInMonth * SECONDS_IN_DAY;
+
         const now = Date.now();
         const monthStart = new Date(year, month, 1).getTime();
         const isCurrentMonth =
-          month === new Date().getMonth() && year === new Date().getFullYear();
+          (month === new Date().getMonth() && year === new Date().getFullYear());
         const elapsedMonthSeconds = isCurrentMonth
           ? Math.floor((now - monthStart) / 1000)
           : totalMonthSeconds;
 
+        // Build a list of keys for each day of that month
         const dateKeys = [];
-        for (let d = 1; d <= days; d++) {
+        for (let d = 1; d <= daysInMonth; d++) {
           const dateObj = new Date(year, month, d);
           dateKeys.push(formatDateKey(dateObj));
         }
+
+        // Load every day’s log
         const promises = dateKeys.map(key => loadFromFirestore(`logs/${key}`));
         const docs = await Promise.all(promises);
 
@@ -563,22 +604,26 @@
         docs.forEach((docData, idx) => {
           const dayLog = docData?.log || [];
           const dateKey = dateKeys[idx];
-          const [yearD, monthD, dayD] = dateKey.split('-').map(Number);
-          const dayStart = new Date(yearD, monthD - 1, dayD).getTime();
-          const dayEnd = dayStart + SECONDS_IN_DAY * 1000;
+          const [yD, mD, dD] = dateKey.split('-').map(Number);
+          const dayStart = new Date(yD, mD - 1, dD).getTime();
+          const dayEnd   = dayStart + SECONDS_IN_DAY * 1000;
 
           dayLog.forEach(a => {
-            const start = a.start;
-            const end =
-              dateKey === formatDateKey(new Date())
-                ? a.end || now
+            // Skip if no end timestamp:
+            if (a.end == null) {
+              return;
+            }
+            const startTs = a.start;
+            const endTs =
+              (dateKey === formatDateKey(new Date()))
+                ? (a.end || now)
                 : a.end;
-            const clampedStart = Math.max(start, dayStart);
-            const clampedEnd = Math.min(end, dayEnd);
+            const clampedStart = Math.max(startTs, dayStart);
+            const clampedEnd   = Math.min(endTs, dayEnd);
             if (clampedEnd > clampedStart) {
-              const dur = Math.floor((clampedEnd - clampedStart) / 1000);
-              activityDurations[a.name] = (activityDurations[a.name] || 0) + dur;
-              productiveSeconds += dur;
+              const durSec = Math.floor((clampedEnd - clampedStart) / 1000);
+              activityDurations[a.name] = (activityDurations[a.name] || 0) + durSec;
+              productiveSeconds += durSec;
             }
           });
         });
@@ -594,7 +639,7 @@
         const remainingSeconds = Math.max(0, totalMonthSeconds - elapsedMonthSeconds);
 
         const baseLabels = Object.keys(activityDurations);
-        const baseData = Object.values(activityDurations);
+        const baseData   = Object.values(activityDurations);
 
         baseLabels.forEach((name, idx) => {
           const secs = baseData[idx];
@@ -640,8 +685,9 @@
 
         updateActivityStats(
           activityDurations,
-          isCurrentMonth ? elapsedMonthSeconds : totalMonthSeconds,
-          baseLabels
+          elapsedMonthSeconds,   // periodSeconds for monthly
+          baseLabels,
+          totalMonthSeconds      // totalPeriodSeconds for monthly
         );
       }
 
@@ -653,22 +699,38 @@
       }
     }
 
-    function updateActivityStats(durations, periodSeconds, baseLabels) {
+    // ================================================
+    // 8b) updateActivityStats()
+    //     → Now accepts a 4th argument: totalPeriodSeconds
+    // ================================================
+    function updateActivityStats(durations, periodSeconds, baseLabels, totalPeriodSeconds) {
       const statsDiv = document.getElementById('activityStats');
-      let html;
+      let html = '';
 
       if (viewMode === 'daily') {
-        html = '<table><tr><th>Activity</th><th>Time</th><th>% of Elapsed</th><th>Delete</th></tr>';
+        // If “Show Percentage of Period” is ON, label the column “% of 24h”,
+        // otherwise fallback to “% of Elapsed”:
+        if (showPercent) {
+          html += '<table><tr><th>Activity</th><th>Time</th><th>% of 24h</th><th>Delete</th></tr>';
+        } else {
+          html += '<table><tr><th>Activity</th><th>Time</th><th>% of Elapsed</th><th>Delete</th></tr>';
+        }
+
         const allLabels = Object.keys(durations);
         allLabels.forEach((name, idx) => {
           const secs = durations[name];
-          const pct = ((secs / periodSeconds) * 100).toFixed(1);
+          // pick which denominator to use:
+          const denom = showPercent ? totalPeriodSeconds : periodSeconds;
+          const pct = ((secs / denom) * 100).toFixed(1);
+
           let color;
-          if (name === 'Unaccounted') color = '#777';
-          else {
+          if (name === 'Unaccounted') {
+            color = '#777';
+          } else {
             const ai = baseLabels.indexOf(name);
             color = genericColors[ai % genericColors.length];
           }
+
           html += `
             <tr>
               <td class="clickable" onclick="selectActivity('${encodeURIComponent(name)}')" style="color: ${color}">${name}</td>
@@ -677,19 +739,30 @@
               <td><button class="delete-btn" onclick="deleteActivity('${encodeURIComponent(name)}')">&#x2716;</button></td>
             </tr>`;
         });
+
         html += '</table>';
       } else {
-        html = '<table><tr><th>Activity</th><th>Time</th><th>% of Elapsed</th></tr>';
+        // Monthly mode: same logic but no Delete column
+        if (showPercent) {
+          html += '<table><tr><th>Activity</th><th>Time</th><th>% of Month</th></tr>';
+        } else {
+          html += '<table><tr><th>Activity</th><th>Time</th><th>% of Elapsed</th></tr>';
+        }
+
         const allLabels = Object.keys(durations);
         allLabels.forEach((name, idx) => {
           const secs = durations[name];
-          const pct = ((secs / periodSeconds) * 100).toFixed(1);
+          const denom = showPercent ? totalPeriodSeconds : periodSeconds;
+          const pct = ((secs / denom) * 100).toFixed(1);
+
           let color;
-          if (name === 'Unaccounted') color = '#777';
-          else {
+          if (name === 'Unaccounted') {
+            color = '#777';
+          } else {
             const ai = baseLabels.indexOf(name);
             color = genericColors[ai % genericColors.length];
           }
+
           html += `
             <tr>
               <td style="color: ${color}">${name}</td>
@@ -697,6 +770,7 @@
               <td>${pct}%</td>
             </tr>`;
         });
+
         html += '</table>';
       }
 
@@ -721,10 +795,18 @@
           const prevKey = formatDateKey(yDay);
           const prevLogDoc = await loadFromFirestore(`logs/${prevKey}`);
           const prevLog = prevLogDoc?.log || [];
-          prevLog.push({ name: savedCurrent.name, start: savedCurrent.start, end: midnightTimestamp });
+
+          prevLog.push({
+            name: savedCurrent.name,
+            start: savedCurrent.start,
+            end: midnightTimestamp
+          });
           await saveToFirestore(`logs/${prevKey}`, { log: prevLog });
 
-          currentActivity = { name: savedCurrent.name, start: midnightTimestamp };
+          currentActivity = {
+            name: savedCurrent.name,
+            start: midnightTimestamp
+          };
           await saveToFirestore(`meta/currentActivity`, { currentActivity });
         }
 
@@ -745,7 +827,15 @@
       const ctx = document.getElementById('timeChart').getContext('2d');
       chart = new Chart(ctx, {
         type: 'doughnut',
-        data: { labels: [], datasets: [{ data: [], backgroundColor: [], borderColor: '#eee', borderWidth: 1 }] },
+        data: {
+          labels: [],
+          datasets: [{
+            data:             [],
+            backgroundColor:  [],
+            borderColor:      '#eee',
+            borderWidth:      1
+          }]
+        },
         options: {
           responsive: true,
           plugins: {
@@ -756,13 +846,14 @@
         }
       });
 
+      // Pre‐set datePicker/monthPicker to today
       const today = new Date();
       const offsetMinutes = today.getTimezoneOffset();
       const localMid = new Date(today.getTime() - offsetMinutes * 60000);
       const todayStr = localMid.toISOString().split('T')[0];
       const year = localMid.getFullYear();
-      const month = String(localMid.getMonth() + 1).padStart(2, '0');
-      const monthStr = `${year}-${month}`;
+      const mm = String(localMid.getMonth() + 1).padStart(2, '0');
+      const monthStr = `${year}-${mm}`;
 
       datePicker.value = todayStr;
       monthPicker.value = monthStr;
@@ -772,6 +863,7 @@
       updateControls();
       updateChart();
 
+      // Refresh chart every second so “live” activity grows in real‐time:
       setInterval(updateChart, 1000);
     }
   </script>
